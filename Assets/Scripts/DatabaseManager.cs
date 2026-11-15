@@ -114,7 +114,7 @@ namespace GrandStrategy.Database
         }
 
         /// <summary>
-        /// Oyun arxa planını idarə edən 5 əsas cədvəli (Province, Population, Economy, Diplomacy, Army)
+        /// Oyun arxa planını idarə edən 6 əsas cədvəli (Nation, Province, Population, Economy, Diplomacy, Army)
         /// ORM vasitəsilə lokal bazada avtomatik formalaşdırır.
         /// </summary>
         public void CreateTables()
@@ -124,13 +124,15 @@ namespace GrandStrategy.Database
                 throw new InvalidOperationException("Cədvəlləri yaratmaq üçün aktiv SQLite bağlantısı tələb olunur.");
             }
 
+            _connection.CreateTable<Nation>();
             _connection.CreateTable<Province>();
             _connection.CreateTable<Population>();
             _connection.CreateTable<Economy>();
             _connection.CreateTable<Diplomacy>();
             _connection.CreateTable<Army>();
+            _connection.CreateTable<Leader>();
 
-            Debug.Log("[DatabaseManager] ORM Cədvəlləri yaradıldı/təsdiqləndi: Provinces, Populations, Economies, Diplomacies, Armies.");
+            Debug.Log("[DatabaseManager] ORM Cədvəlləri yaradıldı/təsdiqləndi: Nations, Provinces, Populations, Economies, Diplomacies, Armies, Leaders.");
         }
 
         /// <summary>
@@ -149,24 +151,41 @@ namespace GrandStrategy.Database
             try
             {
                 int existingProvinces = _connection.Table<Province>().Count();
-                if (existingProvinces == 0 || forceReseed)
+                int existingLeaders = _connection.Table<Leader>().Count();
+                if (existingProvinces == 0 || existingLeaders == 0 || forceReseed)
                 {
                     _connection.RunInTransaction(() =>
                     {
-                        if (forceReseed)
+                        if (forceReseed || existingProvinces == 0)
                         {
+                            _connection.DeleteAll<Leader>();
                             _connection.DeleteAll<Army>();
                             _connection.DeleteAll<Diplomacy>();
                             _connection.DeleteAll<Economy>();
                             _connection.DeleteAll<Population>();
                             _connection.DeleteAll<Province>();
+                            _connection.DeleteAll<Nation>();
                             _connection.Execute("DELETE FROM sqlite_sequence;");
                         }
 
-                        // 1. Province (Əyalətlər) sınaq məlumatları
+                        // 1. Province (Əyalətlər) sınaq məlumatları (Faza 5-6C: Gold, Food, Demoqrafiya, Morale, Siege, BirthRate)
                         var anadolu = new Province
                         {
                             Name = "Anadolu",
+                            Gold = 5000f,
+                            Food = 2500f,
+                            Babies = 1200,
+                            Youths = 2500,
+                            Adults = 6800,
+                            Elders = 950,
+                            Wounded = 150,
+                            ProductivityMultiplier = 1.0f,
+                            ActiveConstruction = string.Empty,
+                            ConstructionMonthsLeft = 0,
+                            PublicOrder = 100f,
+                            IsBesieged = false,
+                            BirthRateModifier = 1.0f,
+                            IsExploited = false,
                             Climate = "Mülayim",
                             OwnerFactionId = 1,
                             DevelopmentLevel = 18
@@ -175,6 +194,20 @@ namespace GrandStrategy.Database
                         var shirvan = new Province
                         {
                             Name = "Şirvan",
+                            Gold = 3800f,
+                            Food = 1800f,
+                            Babies = 850,
+                            Youths = 800,
+                            Adults = 5400,
+                            Elders = 550,
+                            Wounded = 50,
+                            ProductivityMultiplier = 1.0f,
+                            ActiveConstruction = string.Empty,
+                            ConstructionMonthsLeft = 0,
+                            PublicOrder = 100f,
+                            IsBesieged = false,
+                            BirthRateModifier = 1.0f,
+                            IsExploited = false,
                             Climate = "Quraq",
                             OwnerFactionId = 2,
                             DevelopmentLevel = 16
@@ -183,31 +216,88 @@ namespace GrandStrategy.Database
                         _connection.Insert(anadolu);
                         _connection.Insert(shirvan);
 
+                        // 1b. Nation (Dövlətlər) cədvəli sınaq məlumatları (Faza 5-6D: Hakim Sülalə və İdarəetmə Həddi daxil)
+                        var seljukNation = new Nation
+                        {
+                            Name = "Səlcuqlu Dövləti (Anadolu)",
+                            RulingDynastyName = "Səlcuqlu Sultanlığı",
+                            ControlledProvinceCount = 1,
+                            DirectControlledProvinceCount = 1,
+                            MaxDirectControl = 3,
+                            Gold = anadolu.Gold,
+                            Food = anadolu.Food,
+                            Babies = anadolu.Babies,
+                            Youths = anadolu.Youths,
+                            Adults = anadolu.Adults,
+                            Elders = anadolu.Elders,
+                            Wounded = anadolu.Wounded
+                        };
+
+                        var shirvanNation = new Nation
+                        {
+                            Name = "Şirvanşahlar Dövləti (Şirvan)",
+                            RulingDynastyName = "Şirvanşahlar Dövləti",
+                            ControlledProvinceCount = 1,
+                            DirectControlledProvinceCount = 1,
+                            MaxDirectControl = 3,
+                            DiplomaticReputation = 100f,
+                            PeakMilitaryPower = 0,
+                            Gold = shirvan.Gold,
+                            Food = shirvan.Food,
+                            Babies = shirvan.Babies,
+                            Youths = shirvan.Youths,
+                            Adults = shirvan.Adults,
+                            Elders = shirvan.Elders,
+                            Wounded = shirvan.Wounded
+                        };
+
+                        var byzantineNation = new Nation
+                        {
+                            Name = "Bizans İmperiyası",
+                            RulingDynastyName = "Dukas Sülaləsi",
+                            ControlledProvinceCount = 1,
+                            DirectControlledProvinceCount = 1,
+                            MaxDirectControl = 3,
+                            DiplomaticReputation = 100f,
+                            PeakMilitaryPower = 0,
+                            Gold = 4000f,
+                            Food = 2000f,
+                            Babies = 800,
+                            Youths = 1500,
+                            Adults = 4000,
+                            Elders = 600,
+                            Wounded = 100
+                        };
+
+                        _connection.Insert(seljukNation);
+                        _connection.Insert(shirvanNation);
+                        _connection.Insert(byzantineNation);
+
                         // 2. Population (Əhali) sınaq məlumatları
                         var anadoluPop = new Population
                         {
                             ProvinceId = anadolu.Id,
-                            Infants = 1200,
-                            Youths = 2500,
-                            Adults = 6800,
-                            Elders = 950,
-                            Wounded = 150
+                            Infants = anadolu.Babies,
+                            Youths = anadolu.Youths,
+                            Adults = anadolu.Adults,
+                            Elders = anadolu.Elders,
+                            Wounded = anadolu.Wounded
                         };
 
                         var shirvanPop = new Population
                         {
                             ProvinceId = shirvan.Id,
-                            Infants = 850,
-                            Youths = 800,
-                            Adults = 5400,
-                            Elders = 550,
-                            Wounded = 50
+                            Infants = shirvan.Babies,
+                            Youths = shirvan.Youths,
+                            Adults = shirvan.Adults,
+                            Elders = shirvan.Elders,
+                            Wounded = shirvan.Wounded
                         };
 
                         _connection.Insert(anadoluPop);
                         _connection.Insert(shirvanPop);
 
-                        // 3. Economy (Bazar və Resurslar) başlanğıc sınaq məlumatları (Səfərbərlikdən əvvəlki istehsal gücü)
+                        // 3. Economy (Bazar və Resurslar) başlanğıc sınaq məlumatları
                         var anadoluEco = new Economy
                         {
                             ProvinceId = anadolu.Id,
@@ -234,34 +324,72 @@ namespace GrandStrategy.Database
                         {
                             FactionA_Id = 1,
                             FactionB_Id = 2,
+                            RelationScore = 65,
                             RelationshipScore = 65,
                             TreatyType = "Ticarət",
-                            TreatyDuration = 24
+                            TreatyDuration = 24,
+                            CeasefireMonthsLeft = 0,
+                            NonAggressionMonthsLeft = 0
                         };
 
                         var treatyWar = new Diplomacy
                         {
                             FactionA_Id = 1,
                             FactionB_Id = 3,
+                            RelationScore = -85,
                             RelationshipScore = -85,
                             TreatyType = "Müharibə",
-                            TreatyDuration = 12
+                            TreatyDuration = 12,
+                            CeasefireMonthsLeft = 0,
+                            NonAggressionMonthsLeft = 0
                         };
 
                         _connection.Insert(treatyTrade);
                         _connection.Insert(treatyWar);
+
+                        // 5. Leaders (Liderlər, Sədaqət və Üsyan Sistemi - Faza 6B & 7.1) sınaq məlumatları
+                        var kingLeader = new Leader
+                        {
+                            Name = "Kral",
+                            Loyalty = 100f,
+                            IsRuler = true,
+                            IsIndependent = false,
+                            AssignedProvinceId = null,
+                            AssignedArmyId = "1",
+                            SecretPactFactionId = null
+                        };
+
+                        var governorA = new Leader
+                        {
+                            Name = "Qubernator A",
+                            Loyalty = 40f,
+                            IsIndependent = false,
+                            AssignedProvinceId = anadolu.Id.ToString(),
+                            AssignedArmyId = null,
+                            SecretPactFactionId = null
+                        };
+
+                        _connection.Insert(kingLeader);
+                        _connection.Insert(governorA);
                     });
 
                     Debug.Log("[DatabaseManager] Dummy (Sınaq) məlumatları bazaya uğurla daxil edildi.");
                 }
 
                 // Bazadan məlumatları yenidən oxuyub konsola çap edirik
+                List<Nation> nations = _connection.Table<Nation>().ToList();
                 List<Province> provinces = _connection.Table<Province>().ToList();
                 List<Population> populations = _connection.Table<Population>().ToList();
                 List<Economy> economies = _connection.Table<Economy>().ToList();
                 List<Diplomacy> diplomacies = _connection.Table<Diplomacy>().ToList();
+                List<Leader> leaders = _connection.Table<Leader>().ToList();
 
                 Debug.Log($"=== [DatabaseManager] BAZADAN OXUNAN SINAQ MƏLUMATLARI ===");
+                foreach (var n in nations)
+                {
+                    Debug.Log(n.ToString());
+                }
+
                 foreach (var p in provinces)
                 {
                     Debug.Log(p.ToString());
@@ -282,7 +410,12 @@ namespace GrandStrategy.Database
                     Debug.Log(dip.ToString());
                 }
 
-                return provinces.Count > 0 && populations.Count > 0 && economies.Count > 0 && diplomacies.Count > 0;
+                foreach (var ldr in leaders)
+                {
+                    Debug.Log(ldr.ToString());
+                }
+
+                return provinces.Count > 0 && populations.Count > 0 && economies.Count > 0 && diplomacies.Count > 0 && leaders.Count > 0;
             }
             catch (Exception ex)
             {

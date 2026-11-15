@@ -122,26 +122,40 @@ namespace GrandStrategy.Core
             Population population,
             Economy economy,
             int month,
-            int year)
+            int year,
+            float taxModifier = 1.0f)
         {
             float climateBonus = GetClimateFoodMultiplier(province.Climate);
+            float baseProductivity = province.ProductivityMultiplier > 0f ? province.ProductivityMultiplier : 1.0f;
+
+            // Faza 6C: Əgər əyalətin PublicOrder dəyəri 30-dan aşağı düşərsə (itaətsizlik/üsyan),
+            // həmin əyalətin faktiki məhsuldarlığı müvəqqəti olaraq yarıya (0.5x) düşür (xalq vergi vermir/işləmir).
+            float productivity = province.PublicOrder < 30f ? (baseProductivity * 0.5f) : baseProductivity;
+
             int devLevel = Mathf.Max(1, province.DevelopmentLevel);
             int adults = Mathf.Max(0, population.Adults);
+            int youths = Mathf.Max(0, population.Youths);
 
-            // 1. Aylıq İstehsal və Vergi Hesablanması:
-            // FoodProduction = (Adults / 100) * DevelopmentLevel * İqlim Bonusu
-            economy.FoodProduction = (adults / adultsFoodDivisor) * devLevel * climateBonus;
+            // 1. Aylıq İstehsal və Vergi Hesablanması (Youths, Adults və ProductivityMultiplier nəzərə alınmaqla Gold və Food artır):
+            // FoodProduction = ((Adults / 100) + (Youths / 250)) * DevelopmentLevel * İqlim Bonusu * ProductivityMultiplier
+            economy.FoodProduction = ((adults / adultsFoodDivisor) + (youths / (adultsFoodDivisor * 2.5f))) * devLevel * climateBonus * productivity;
 
-            // RawMaterials = (Adults / 200) * DevelopmentLevel
-            economy.RawMaterials = (adults / adultsRawMaterialDivisor) * devLevel;
+            // RawMaterials = (Adults / 200) * DevelopmentLevel * ProductivityMultiplier
+            economy.RawMaterials = (adults / adultsRawMaterialDivisor) * devLevel * productivity;
 
-            // LocalTaxIncome = (Adults * 0.5) + (LuxuryGoods * 2)
-            economy.LocalTaxIncome = (adults * taxPerAdult) + (economy.LuxuryGoods * taxPerLuxuryGood);
+            // LocalTaxIncome (Gold artımı) = ((Adults * 0.5) + (Youths * 0.25) + (LuxuryGoods * 2)) * ProductivityMultiplier * taxModifier (Overextension cəzası daxil)
+            float clampedTaxMod = Mathf.Clamp01(taxModifier);
+            economy.LocalTaxIncome = ((adults * taxPerAdult) + (youths * (taxPerAdult * 0.5f)) + (economy.LuxuryGoods * taxPerLuxuryGood)) * productivity * clampedTaxMod;
 
-            // 2. Aylıq Qida İstehlakı və Aclıq Yoxlaması:
-            int totalPop = population.TotalPopulation;
-            float foodConsumed = totalPop * foodConsumptionPerPerson;
+            // 2. Aylıq Qida İstehlakı (Babies, Elders, Wounded və aktiv əhali sayına görə Food azalır):
+            float nonWorkingConsumption = (population.Infants + population.Elders + population.Wounded) * (foodConsumptionPerPerson * 1.2f);
+            float workingConsumption = (population.Youths + population.Adults) * foodConsumptionPerPerson;
+            float foodConsumed = nonWorkingConsumption + workingConsumption;
             float foodBalance = economy.FoodProduction - foodConsumed;
+
+            // Əyalətin Qızıl (Gold) və Ərzaq (Food) ehtiyatlarını yeniləyirik
+            province.Gold += economy.LocalTaxIncome;
+            province.Food += foodBalance;
 
             var report = new MonthlyEconomyReport
             {
@@ -160,10 +174,11 @@ namespace GrandStrategy.Core
                 StarvedElders = 0
             };
 
-            // Əgər nəticə mənfidirsə (Qida çatmırsa): "Aclıq" statusu işə düşür
-            if (foodBalance < 0f)
+            // Əgər aylıq balans və ya ümumi ərzaq mənfiyə düşərsə (Qida çatmırsa): Xəstəlik/Aclıq ölümü başlayır
+            if (foodBalance < 0f || province.Food < 0f)
             {
-                float missingFood = Mathf.Abs(foodBalance);
+                float missingFood = province.Food < 0f ? Mathf.Abs(province.Food) : Mathf.Abs(foodBalance);
+                province.Food = Mathf.Max(0f, province.Food);
                 int totalDeathsNeeded = Mathf.RoundToInt(missingFood * starvationDeathsPerMissingFood);
 
                 if (totalDeathsNeeded > 0 && (population.Infants > 0 || population.Elders > 0))
@@ -202,12 +217,19 @@ namespace GrandStrategy.Core
                 }
             }
 
+            // Province daxilindəki demoqrafik sütunları sinxronlaşdırırıq
+            province.Babies = population.Infants;
+            province.Youths = population.Youths;
+            province.Adults = population.Adults;
+            province.Elders = population.Elders;
+            province.Wounded = population.Wounded;
+
             return report;
         }
 
         /// <summary>
         /// Hər Aylıq Tick-də bütün əyalətlərin İstehsal, Vergi və Qida İstehlakı (Aclıq/Ölüm)
-        /// əməliyyatlarını DatabaseManager.RunInTransaction daxilində toplu şəkildə yeniləyir.
+        /// əməliyyatlarını DatabaseManager.RunInTransaction daxilində toplu şəkildə yeniləyir (Auto-save).
         /// </summary>
         public void ProcessMonthlyEconomy(DatabaseManager dbManager, int month, int year, bool logStarvationToConsole = true)
         {
@@ -224,6 +246,7 @@ namespace GrandStrategy.Core
                 List<Province> provinces = conn.Table<Province>().ToList();
                 List<Population> populations = conn.Table<Population>().ToList();
                 List<Economy> economies = conn.Table<Economy>().ToList();
+                List<Nation> nations = conn.Table<Nation>().ToList();
 
                 var popByProvince = new Dictionary<int, Population>(populations.Count);
                 foreach (var pop in populations)
@@ -237,8 +260,9 @@ namespace GrandStrategy.Core
                     ecoByProvince[eco.ProvinceId] = eco;
                 }
 
-                foreach (var prov in provinces)
+                for (int i = 0; i < provinces.Count; i++)
                 {
+                    Province prov = provinces[i];
                     if (!popByProvince.TryGetValue(prov.Id, out Population pop))
                     {
                         continue;
@@ -252,8 +276,27 @@ namespace GrandStrategy.Core
                         ecoByProvince[prov.Id] = eco;
                     }
 
-                    MonthlyEconomyReport report = ApplyMonthlyEconomyAndConsumption(prov, pop, eco, month, year);
+                    Nation matchingNation = nations.Find(n => n.Id == prov.OwnerFactionId);
+                    float taxModifier = matchingNation != null ? Mathf.Clamp01(1.0f - matchingNation.OverextensionPenaltyRate) : 1.0f;
+                    MonthlyEconomyReport report = ApplyMonthlyEconomyAndConsumption(prov, pop, eco, month, year, taxModifier);
                     LastMonthlyReports.Add(report);
+                    if (matchingNation != null)
+                    {
+                        // Faza 6C: Mühasirə başlayanda əyalətdəki resurslar (Qızıl və Ərzaq)
+                        // qlobal (Nation) xəzinəyə axmağı dayandırır.
+                        if (!prov.IsBesieged)
+                        {
+                            matchingNation.Gold = prov.Gold;
+                            matchingNation.Food = prov.Food;
+                        }
+
+                        matchingNation.Babies = prov.Babies;
+                        matchingNation.Youths = prov.Youths;
+                        matchingNation.Adults = prov.Adults;
+                        matchingNation.Elders = prov.Elders;
+                        matchingNation.Wounded = prov.Wounded;
+                        conn.Update(matchingNation);
+                    }
 
                     if (report.IsStarving)
                     {
@@ -269,7 +312,9 @@ namespace GrandStrategy.Core
                     }
                 }
 
-                // Həm Economy, həm də Population cədvəllərini eyni tranzaksiya daxilində toplu yeniləyirik
+                // Bütün cədvəlləri (Provinces, Nations, Economies, Populations) vahid tranzaksiya daxilində SQLite-a yazırıq (Auto-save)
+                conn.UpdateAll(provinces, runInTransaction: false);
+                conn.UpdateAll(nations, runInTransaction: false);
                 conn.UpdateAll(economies, runInTransaction: false);
                 conn.UpdateAll(populations, runInTransaction: false);
             });

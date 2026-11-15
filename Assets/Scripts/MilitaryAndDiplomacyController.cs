@@ -25,6 +25,21 @@ namespace GrandStrategy.Core
     }
 
     /// <summary>
+    /// Faza 6C - Fövqəladə Vəziyyət (Qadınların Orduya Çağırılması) nəticə strukturu.
+    /// </summary>
+    public struct EmergencyConscriptionResult
+    {
+        public bool Success;
+        public int ProvinceId;
+        public string ProvinceName;
+        public Army CreatedMilitiaArmy;
+        public int ConscriptedAdults;
+        public int AdultsRemaining;
+        public float OldBirthRateModifier;
+        public float NewBirthRateModifier;
+    }
+
+    /// <summary>
     /// Müddəti bitən diplomatik müqavilə haqqında məlumat strukturu.
     /// </summary>
     public struct DiplomacyExpirationReport
@@ -74,8 +89,17 @@ namespace GrandStrategy.Core
         [Tooltip("Neytral dövlətlər arasında hər ay münasibət balının 0-a doğru dəyişmə addımı")]
         [SerializeField, Min(0)] private int monthlyNeutralDriftStep = 2;
 
+        public string LastCeasefireExpiredMessage { get; private set; }
+        public string LastTreatyBrokenMessage { get; private set; }
         public event Action<DraftArmyResult> OnArmyDrafted;
         public event Action<DiplomacyExpirationReport> OnTreatyExpired;
+        public event Action<int, int> OnCeasefireExpired;
+        public event Action<int, int, int> OnCeasefireProposed;
+        public event Action<int, int> OnWarDeclared;
+        public event Action<int, int> OnTreatyBroken;
+        public event Action<int, int, int> OnNonAggressionPactProposed;
+        public event Action<int, int> OnMilitaryAllianceFormed;
+        public event Action<int, int, int> OnAllyJoinedWar;
 
         private void Awake()
         {
@@ -161,6 +185,16 @@ namespace GrandStrategy.Core
 
                 population.Youths -= draftedYouths;
                 population.Adults -= draftedAdults;
+                province.Youths = population.Youths;
+                province.Adults = population.Adults;
+
+                Nation nation = conn.Table<Nation>().FirstOrDefault(n => n.Id == province.Id);
+                if (nation != null)
+                {
+                    nation.Youths = province.Youths;
+                    nation.Adults = province.Adults;
+                    conn.Update(nation);
+                }
 
                 result.YouthsAfter = population.Youths;
                 result.AdultsAfter = population.Adults;
@@ -176,6 +210,7 @@ namespace GrandStrategy.Core
                     Morale = initialMorale
                 };
 
+                conn.Update(province);
                 conn.Update(population);
                 conn.Insert(newArmy);
 
@@ -212,6 +247,8 @@ namespace GrandStrategy.Core
             }
 
             var expiredReports = new List<DiplomacyExpirationReport>();
+            var expiredCeasefires = new List<(int factionA, int factionB)>();
+            var expiredNAPs = new List<(int factionA, int factionB)>();
 
             dbManager.RunInTransaction(conn =>
             {
@@ -219,6 +256,35 @@ namespace GrandStrategy.Core
 
                 foreach (var dip in diplomacies)
                 {
+                    // Faza 7.1: Atəşkəs müddətinin azaldılması
+                    if (dip.CeasefireMonthsLeft > 0)
+                    {
+                        dip.CeasefireMonthsLeft -= 1;
+                        if (dip.CeasefireMonthsLeft == 0)
+                        {
+                            LastCeasefireExpiredMessage = "Atəşkəs bitdi!";
+                            if (string.Equals(dip.TreatyType, "Atəşkəs", StringComparison.OrdinalIgnoreCase))
+                            {
+                                dip.TreatyType = expiredTreatyStatus;
+                            }
+                            expiredCeasefires.Add((dip.FactionA_Id, dip.FactionB_Id));
+                        }
+                    }
+
+                    // Faza 7.2: Hücum Etməmək Paktı müddətinin azaldılması
+                    if (dip.NonAggressionMonthsLeft > 0)
+                    {
+                        dip.NonAggressionMonthsLeft -= 1;
+                        if (dip.NonAggressionMonthsLeft == 0)
+                        {
+                            if (string.Equals(dip.TreatyType, "Hücum Etməmək Paktı", StringComparison.OrdinalIgnoreCase))
+                            {
+                                dip.TreatyType = expiredTreatyStatus;
+                            }
+                            expiredNAPs.Add((dip.FactionA_Id, dip.FactionB_Id));
+                        }
+                    }
+
                     if (dip.TreatyDuration > 0)
                     {
                         dip.TreatyDuration -= 1;
@@ -273,6 +339,693 @@ namespace GrandStrategy.Core
 
                 OnTreatyExpired?.Invoke(exp);
             }
+
+            foreach (var cf in expiredCeasefires)
+            {
+                if (logExpirations)
+                {
+                    Debug.LogWarning(
+                        $"[MilitaryAndDiplomacyController - Diplomatiya] Ay {month} (İl {year}): " +
+                        $"Atəşkəs bitdi! Fraksiya {cf.factionA} və Fraksiya {cf.factionB} arasındakı atəşkəs müddəti başa çatdı.");
+                }
+
+                OnCeasefireExpired?.Invoke(cf.factionA, cf.factionB);
+            }
+
+            foreach (var nap in expiredNAPs)
+            {
+                if (logExpirations)
+                {
+                    Debug.Log(
+                        $"[MilitaryAndDiplomacyController - Diplomatiya] Ay {month} (İl {year}): " +
+                        $"Hücum Etməmək Paktı bitdi! Fraksiya {nap.factionA} və Fraksiya {nap.factionB} arasındakı pakt başa çatdı.");
+                }
+            }
         }
+
+        /// <summary>
+        /// Faza 6C - Fövqəladə Vəziyyət (Qadınların Orduya Çağırılması):
+        /// Əyalətdəki Adults sayının bir hissəsi (qadınları təmsil edən 20%) orduya (Milis) cəlb edilir.
+        /// Ağır Cəza: Əyalətin BirthRateModifier dəyəri uzunmüddətli olaraq 0.2f-ə (standartın 20%-nə) düşür (doğum çökür).
+        /// </summary>
+        public EmergencyConscriptionResult CallEmergencyConscription(string provinceId, DatabaseManager dbManager = null)
+        {
+            if (string.IsNullOrWhiteSpace(provinceId))
+            {
+                Debug.LogWarning("[MilitaryAndDiplomacyController] CallEmergencyConscription uğursuz: provinceId boşdur.");
+                return default;
+            }
+
+            int id = -1;
+            if (!int.TryParse(provinceId, out id))
+            {
+                string digits = System.Text.RegularExpressions.Regex.Match(provinceId, @"\d+").Value;
+                int.TryParse(digits, out id);
+            }
+
+            return CallEmergencyConscription(id, dbManager);
+        }
+
+        /// <summary>
+        /// int ID ilə Fövqəladə Vəziyyət (CallEmergencyConscription) əmrini icra edir.
+        /// </summary>
+        public EmergencyConscriptionResult CallEmergencyConscription(int provinceId, DatabaseManager dbManager = null)
+        {
+            var result = new EmergencyConscriptionResult { Success = false, ProvinceId = provinceId };
+
+            DatabaseManager db = dbManager != null ? dbManager : DatabaseManager.Instance;
+            if (db == null)
+            {
+                db = FindAnyObjectByType<DatabaseManager>();
+            }
+
+            if (db == null || !db.IsConnected)
+            {
+                Debug.LogError("[MilitaryAndDiplomacyController] CallEmergencyConscription uğursuz: DatabaseManager bağlıdır.");
+                return result;
+            }
+
+            db.RunInTransaction(conn =>
+            {
+                Province province = conn.Table<Province>().FirstOrDefault(p => p.Id == provinceId);
+                Population population = conn.Table<Population>().FirstOrDefault(pop => pop.ProvinceId == provinceId);
+
+                if (province == null || population == null)
+                {
+                    Debug.LogError($"[MilitaryAndDiplomacyController] CallEmergencyConscription: ProvinceId={provinceId} tapılmadı.");
+                    return;
+                }
+
+                result.ProvinceName = province.Name;
+                result.OldBirthRateModifier = province.BirthRateModifier;
+
+                // Əyalətdəki Adults sayının 20%-i (qadınları təmsil edən hissə) səfərbər edilir
+                int conscriptedWomen = Mathf.Clamp(Mathf.RoundToInt(population.Adults * 0.20f), 0, population.Adults);
+
+                population.Adults -= conscriptedWomen;
+                province.Adults = population.Adults;
+
+                // Ağır Cəza: Əyalətin BirthRateModifier dəyəri 0.2f-ə düşür (doğum çökür)
+                province.BirthRateModifier = 0.2f;
+
+                // Xalqın moralına da cəza veririk (həyəcan və itaətsizlik riski)
+                province.PublicOrder = Mathf.Clamp(province.PublicOrder - 20f, 0f, 100f);
+
+                Nation nation = conn.Table<Nation>().FirstOrDefault(n => n.Id == province.OwnerFactionId);
+                if (nation != null)
+                {
+                    nation.Adults = province.Adults;
+                    conn.Update(nation);
+                }
+
+                var militiaArmy = new Army
+                {
+                    OwnerFactionId = province.OwnerFactionId,
+                    LocationProvinceId = province.Id,
+                    YouthSoldiers = 0,
+                    AdultSoldiers = conscriptedWomen,
+                    Morale = 0.8f
+                };
+
+                conn.Update(province);
+                conn.Update(population);
+                conn.Insert(militiaArmy);
+
+                result.CreatedMilitiaArmy = militiaArmy;
+                result.ConscriptedAdults = conscriptedWomen;
+                result.AdultsRemaining = population.Adults;
+                result.NewBirthRateModifier = province.BirthRateModifier;
+                result.Success = true;
+
+                Debug.LogWarning(
+                    $"[MilitaryAndDiplomacyController] FÖVQƏLADƏ VƏZİYYƏT ELAN EDİLDİ! -> Əyalət '{province.Name}': " +
+                    $"{conscriptedWomen} qadın/yetkin orduya cəlb edildi (Milis Ordusu #{militiaArmy.Id}). " +
+                    $"AĞIR CƏZA: Doğum Çarpanı (BirthRateModifier) 0.2x (20%)-ə düşdü!");
+            });
+
+            return result;
+        }
+
+        #region Faza 7.1 - Atəşkəs (Ceasefire) və Müharibə Sistemi
+
+        /// <summary>
+        /// Faza 7.1 - İki fraksiya arasında atəşkəs təklif edir və qüvvəyə mindirir.
+        /// Müharibə vəziyyətini dayandırır və CeasefireMonthsLeft dəyərini (məsələn, 12 və ya 60 ay) təyin edir.
+        /// </summary>
+        public bool ProposeCeasefire(int factionA, int factionB, int durationMonths, DatabaseManager dbManager = null)
+        {
+            if (durationMonths <= 0)
+            {
+                Debug.LogWarning("[MilitaryAndDiplomacyController] ProposeCeasefire xətası: Müddət 0-dan böyük olmalıdır.");
+                return false;
+            }
+
+            DatabaseManager db = dbManager != null ? dbManager : DatabaseManager.Instance;
+            if (db == null)
+            {
+                db = FindAnyObjectByType<DatabaseManager>();
+            }
+
+            if (db == null || (!db.IsConnected && !db.InitializeDatabase()))
+            {
+                Debug.LogError("[MilitaryAndDiplomacyController] ProposeCeasefire uğursuz: DatabaseManager hazır deyil.");
+                return false;
+            }
+
+            bool success = false;
+            db.RunInTransaction(conn =>
+            {
+                Diplomacy dip = conn.Table<Diplomacy>().FirstOrDefault(d =>
+                    (d.FactionA_Id == factionA && d.FactionB_Id == factionB) ||
+                    (d.FactionA_Id == factionB && d.FactionB_Id == factionA));
+
+                if (dip != null)
+                {
+                    dip.TreatyType = "Atəşkəs";
+                    dip.CeasefireMonthsLeft = durationMonths;
+                    dip.TreatyDuration = Mathf.Max(dip.TreatyDuration, durationMonths);
+                    if (dip.RelationshipScore < 0)
+                    {
+                        dip.RelationshipScore = 0;
+                    }
+                    conn.Update(dip);
+                }
+                else
+                {
+                    dip = new Diplomacy
+                    {
+                        FactionA_Id = factionA,
+                        FactionB_Id = factionB,
+                        RelationshipScore = 0,
+                        TreatyType = "Atəşkəs",
+                        TreatyDuration = durationMonths,
+                        CeasefireMonthsLeft = durationMonths
+                    };
+                    conn.Insert(dip);
+                }
+
+                success = true;
+            });
+
+            if (success)
+            {
+                Debug.Log($"[MilitaryAndDiplomacyController] ATƏŞKƏS BAĞLANDI! Fraksiya {factionA} <-> Fraksiya {factionB} ({durationMonths} ay).");
+                OnCeasefireProposed?.Invoke(factionA, factionB, durationMonths);
+            }
+
+            return success;
+        }
+
+        /// <summary>
+        /// Faza 7.1 - İki fraksiya arasında hazırda aktiv atəşkəs olub-olmadığını yoxlayır.
+        /// </summary>
+        public bool IsCeasefireActive(int factionA, int factionB, DatabaseManager dbManager = null)
+        {
+            if (factionA == factionB)
+            {
+                return false;
+            }
+
+            DatabaseManager db = dbManager != null ? dbManager : DatabaseManager.Instance;
+            if (db == null)
+            {
+                db = FindAnyObjectByType<DatabaseManager>();
+            }
+
+            if (db == null || !db.IsConnected)
+            {
+                return false;
+            }
+
+            Diplomacy dip = db.Connection.Table<Diplomacy>().FirstOrDefault(d =>
+                (d.FactionA_Id == factionA && d.FactionB_Id == factionB) ||
+                (d.FactionA_Id == factionB && d.FactionB_Id == factionA));
+
+            return dip != null && dip.CeasefireMonthsLeft > 0;
+        }
+
+        /// <summary>
+        /// İki fraksiyanın bir-birinə hücum edə bilib-bilməyəcəyini yoxlayır.
+        /// Atəşkəs, Hücum Etməmək Paktı və ya Hərbi İttifaq qüvvədə olduğu müddətdə ordular bir-birinə hücum edə bilməz.
+        /// </summary>
+        public bool CanAttack(int attackerFactionId, int defenderFactionId, DatabaseManager dbManager = null)
+        {
+            if (attackerFactionId == defenderFactionId)
+            {
+                return false;
+            }
+
+            if (IsCeasefireActive(attackerFactionId, defenderFactionId, dbManager))
+            {
+                return false;
+            }
+
+            if (IsNonAggressionPactActive(attackerFactionId, defenderFactionId, dbManager))
+            {
+                return false;
+            }
+
+            if (AreAllies(attackerFactionId, defenderFactionId, dbManager))
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        #region Faza 7.2 - Hücum Etməmək Paktı (Non-Aggression Pact) və Hərbi İttifaq (Military Alliance)
+
+        /// <summary>
+        /// Faza 7.2 - İki fraksiya arasında Hücum Etməmək Paktı təklif edir və qüvvəyə mindirir.
+        /// Əgər təklif edən dövlətin DiplomaticReputation göstəricisi 50-dən aşağıdırsa, digər dövlət müqaviləni rədd edir.
+        /// </summary>
+        public bool ProposeNonAggressionPact(int factionA, int factionB, int durationMonths, DatabaseManager dbManager = null)
+        {
+            if (durationMonths <= 0 || factionA == factionB)
+            {
+                return false;
+            }
+
+            DatabaseManager db = dbManager != null ? dbManager : DatabaseManager.Instance;
+            if (db == null)
+            {
+                db = FindAnyObjectByType<DatabaseManager>();
+            }
+
+            if (db == null || (!db.IsConnected && !db.InitializeDatabase()))
+            {
+                return false;
+            }
+
+            bool success = false;
+            string failReason = null;
+
+            db.RunInTransaction(conn =>
+            {
+                Nation natA = conn.Table<Nation>().FirstOrDefault(n => n.Id == factionA);
+                if (natA != null && natA.DiplomaticReputation < 50f)
+                {
+                    failReason = $"Fraksiya #{factionA}-nın diplomatik nüfuzu ({natA.DiplomaticReputation:F0}/100) çox aşağıdır (< 50)!";
+                    return;
+                }
+
+                Diplomacy dip = conn.Table<Diplomacy>().FirstOrDefault(d =>
+                    (d.FactionA_Id == factionA && d.FactionB_Id == factionB) ||
+                    (d.FactionA_Id == factionB && d.FactionB_Id == factionA));
+
+                if (dip != null)
+                {
+                    dip.TreatyType = "Hücum Etməmək Paktı";
+                    dip.NonAggressionMonthsLeft = durationMonths;
+                    dip.TreatyDuration = Mathf.Max(dip.TreatyDuration, durationMonths);
+                    dip.RelationScore = Mathf.Clamp(dip.RelationScore + 20, -100, 100);
+                    conn.Update(dip);
+                }
+                else
+                {
+                    dip = new Diplomacy
+                    {
+                        FactionA_Id = factionA,
+                        FactionB_Id = factionB,
+                        RelationScore = 20,
+                        TreatyType = "Hücum Etməmək Paktı",
+                        TreatyDuration = durationMonths,
+                        NonAggressionMonthsLeft = durationMonths
+                    };
+                    conn.Insert(dip);
+                }
+
+                success = true;
+            });
+
+            if (!success && !string.IsNullOrEmpty(failReason))
+            {
+                Debug.LogWarning($"[MilitaryAndDiplomacyController] Hücum Etməmək Paktı rədd edildi: {failReason}");
+                return false;
+            }
+
+            if (success)
+            {
+                Debug.Log($"[MilitaryAndDiplomacyController] HÜCUM ETMƏMƏK PAKTI BAĞLANDI! Fraksiya {factionA} <-> Fraksiya {factionB} ({durationMonths} ay).");
+                OnNonAggressionPactProposed?.Invoke(factionA, factionB, durationMonths);
+            }
+
+            return success;
+        }
+
+        /// <summary>
+        /// Faza 7.2 - İki fraksiya arasında hazırda Hücum Etməmək Paktının aktiv olub-olmadığını yoxlayır.
+        /// </summary>
+        public bool IsNonAggressionPactActive(int factionA, int factionB, DatabaseManager dbManager = null)
+        {
+            if (factionA == factionB)
+            {
+                return false;
+            }
+
+            DatabaseManager db = dbManager != null ? dbManager : DatabaseManager.Instance;
+            if (db == null)
+            {
+                db = FindAnyObjectByType<DatabaseManager>();
+            }
+
+            if (db == null || !db.IsConnected)
+            {
+                return false;
+            }
+
+            Diplomacy dip = db.Connection.Table<Diplomacy>().FirstOrDefault(d =>
+                (d.FactionA_Id == factionA && d.FactionB_Id == factionB) ||
+                (d.FactionA_Id == factionB && d.FactionB_Id == factionA));
+
+            return dip != null && dip.IsNonAggressionPactActive;
+        }
+
+        /// <summary>
+        /// Faza 7.2 - İki fraksiya arasında Hərbi İttifaq (Military Alliance) qurur.
+        /// İttifaq qurulduqda RelationScore ən azı +60 (Müttəfiq) olur.
+        /// Əgər təklif edən dövlətin DiplomaticReputation göstəricisi 50-dən aşağıdırsa, təklif rədd edilir.
+        /// </summary>
+        public bool FormMilitaryAlliance(int factionA, int factionB, DatabaseManager dbManager = null)
+        {
+            if (factionA == factionB)
+            {
+                return false;
+            }
+
+            DatabaseManager db = dbManager != null ? dbManager : DatabaseManager.Instance;
+            if (db == null)
+            {
+                db = FindAnyObjectByType<DatabaseManager>();
+            }
+
+            if (db == null || (!db.IsConnected && !db.InitializeDatabase()))
+            {
+                return false;
+            }
+
+            bool success = false;
+            string failReason = null;
+
+            db.RunInTransaction(conn =>
+            {
+                Nation natA = conn.Table<Nation>().FirstOrDefault(n => n.Id == factionA);
+                if (natA != null && natA.DiplomaticReputation < 50f)
+                {
+                    failReason = $"Fraksiya #{factionA}-nın diplomatik nüfuzu ({natA.DiplomaticReputation:F0}/100) çox aşağıdır (< 50)!";
+                    return;
+                }
+
+                Diplomacy dip = conn.Table<Diplomacy>().FirstOrDefault(d =>
+                    (d.FactionA_Id == factionA && d.FactionB_Id == factionB) ||
+                    (d.FactionA_Id == factionB && d.FactionB_Id == factionA));
+
+                if (dip != null)
+                {
+                    dip.TreatyType = "Hərbi İttifaq";
+                    dip.RelationScore = Mathf.Max(60, dip.RelationScore);
+                    dip.TreatyDuration = 120;
+                    conn.Update(dip);
+                }
+                else
+                {
+                    dip = new Diplomacy
+                    {
+                        FactionA_Id = factionA,
+                        FactionB_Id = factionB,
+                        RelationScore = 80,
+                        TreatyType = "Hərbi İttifaq",
+                        TreatyDuration = 120
+                    };
+                    conn.Insert(dip);
+                }
+
+                success = true;
+            });
+
+            if (!success && !string.IsNullOrEmpty(failReason))
+            {
+                Debug.LogWarning($"[MilitaryAndDiplomacyController] Hərbi İttifaq rədd edildi: {failReason}");
+                return false;
+            }
+
+            if (success)
+            {
+                Debug.Log($"[MilitaryAndDiplomacyController] HƏRBİ İTTİFAQ QURULDU! Fraksiya {factionA} <-> Fraksiya {factionB} (Müttəfiq).");
+                OnMilitaryAllianceFormed?.Invoke(factionA, factionB);
+            }
+
+            return success;
+        }
+
+        /// <summary>
+        /// Faza 7.2 - İki fraksiyanın müttəfiq (Hərbi İttifaq) olub-olmadığını yoxlayır.
+        /// </summary>
+        public bool AreAllies(int factionA, int factionB, DatabaseManager dbManager = null)
+        {
+            if (factionA == factionB)
+            {
+                return true;
+            }
+
+            DatabaseManager db = dbManager != null ? dbManager : DatabaseManager.Instance;
+            if (db == null)
+            {
+                db = FindAnyObjectByType<DatabaseManager>();
+            }
+
+            if (db == null || !db.IsConnected)
+            {
+                return false;
+            }
+
+            Diplomacy dip = db.Connection.Table<Diplomacy>().FirstOrDefault(d =>
+                (d.FactionA_Id == factionA && d.FactionB_Id == factionB) ||
+                (d.FactionA_Id == factionB && d.FactionB_Id == factionA));
+
+            return dip != null && dip.IsAlliance;
+        }
+
+        /// <summary>
+        /// Fraksiyanın bütün hərbi müttəfiqlərinin siyahısını qaytarır.
+        /// </summary>
+        public List<int> GetAllies(int factionId, DatabaseManager dbManager = null)
+        {
+            var allies = new List<int>();
+            DatabaseManager db = dbManager != null ? dbManager : DatabaseManager.Instance;
+            if (db == null)
+            {
+                db = FindAnyObjectByType<DatabaseManager>();
+            }
+
+            if (db == null || !db.IsConnected)
+            {
+                return allies;
+            }
+
+            List<Diplomacy> diplomacies = db.Connection.Table<Diplomacy>().ToList();
+            for (int i = 0; i < diplomacies.Count; i++)
+            {
+                Diplomacy dip = diplomacies[i];
+                if (dip.IsAlliance)
+                {
+                    if (dip.FactionA_Id == factionId && dip.FactionB_Id != factionId)
+                    {
+                        allies.Add(dip.FactionB_Id);
+                    }
+                    else if (dip.FactionB_Id == factionId && dip.FactionA_Id != factionId)
+                    {
+                        allies.Add(dip.FactionA_Id);
+                    }
+                }
+            }
+
+            return allies;
+        }
+
+        /// <summary>
+        /// Faza 7.2 - Qüvvədə olan müqaviləni pozaraq birbaşa müharibə elan edir (Nüfuz cəzası ilə).
+        /// </summary>
+        public bool BreakTreatyAndDeclareWar(int factionA, int factionB, DatabaseManager dbManager = null)
+        {
+            return DeclareWar(factionA, factionB, dbManager, breakTreaties: true);
+        }
+
+        #endregion
+
+        /// <summary>
+        /// Faza 7.1 & 7.2 - Müharibə elan edir.
+        /// Əgər breakTreaties=false olarsa və atəşkəs/pakt qüvvədədirsə, müharibə elanı bloklanır və false qaytarır.
+        /// Əgər breakTreaties=true olarsa, qüvvədə olan müqavilə pozulur və DiplomaticReputation kəskin (-30 bal) düşür.
+        /// Həmçinin, Hərbi İttifaq (Call to Arms) mexanikası ilə hər iki tərəfin müttəfiqləri avtomatik müharibəyə qoşulur.
+        /// </summary>
+        public bool DeclareWar(int factionA, int factionB, DatabaseManager dbManager = null, bool breakTreaties = false)
+        {
+            if (factionA == factionB)
+            {
+                return false;
+            }
+
+            DatabaseManager db = dbManager != null ? dbManager : DatabaseManager.Instance;
+            if (db == null)
+            {
+                db = FindAnyObjectByType<DatabaseManager>();
+            }
+
+            if (db == null || (!db.IsConnected && !db.InitializeDatabase()))
+            {
+                return false;
+            }
+
+            bool hasActiveCeasefire = IsCeasefireActive(factionA, factionB, db);
+            bool hasActiveNAP = IsNonAggressionPactActive(factionA, factionB, db);
+            bool hasActiveAlliance = AreAllies(factionA, factionB, db);
+
+            if (!breakTreaties && (hasActiveCeasefire || hasActiveNAP || hasActiveAlliance))
+            {
+                Debug.LogWarning($"[MilitaryAndDiplomacyController] Müharibə elan edilə bilməz: Fraksiya {factionA} və {factionB} arasında Atəşkəs/Pakt qüvvədədir!");
+                return false;
+            }
+
+            var alliesOfA = new List<int>();
+            var alliesOfB = new List<int>();
+
+            db.RunInTransaction(conn =>
+            {
+                // Əgər qüvvədə olan müqavilə pozulubsa -> DiplomaticReputation kəskin (-30 bal) düşür!
+                if (hasActiveCeasefire || hasActiveNAP || hasActiveAlliance)
+                {
+                    Nation natA = conn.Table<Nation>().FirstOrDefault(n => n.Id == factionA);
+                    if (natA != null)
+                    {
+                        float oldRep = natA.DiplomaticReputation;
+                        natA.DiplomaticReputation = Mathf.Clamp(natA.DiplomaticReputation - 30f, 0f, 100f);
+                        conn.Update(natA);
+
+                        LastTreatyBrokenMessage = $"MÜQAVİLƏ POZULDU! Fraksiya #{factionA} qüvvədə olan paktı pozaraq müharibə elan etdi! DiplomaticReputation -30 bal azaldı ({oldRep:F0} -> {natA.DiplomaticReputation:F0})!";
+                        Debug.LogWarning($"[MilitaryAndDiplomacyController] {LastTreatyBrokenMessage}");
+                        OnTreatyBroken?.Invoke(factionA, factionB);
+                    }
+                }
+
+                // Əsas iki fraksiya arasında müharibə təyin edilir
+                Diplomacy dip = conn.Table<Diplomacy>().FirstOrDefault(d =>
+                    (d.FactionA_Id == factionA && d.FactionB_Id == factionB) ||
+                    (d.FactionA_Id == factionB && d.FactionB_Id == factionA));
+
+                if (dip != null)
+                {
+                    dip.TreatyType = "Müharibə";
+                    dip.RelationScore = -100;
+                    dip.CeasefireMonthsLeft = 0;
+                    dip.NonAggressionMonthsLeft = 0;
+                    dip.TreatyDuration = 24;
+                    conn.Update(dip);
+                }
+                else
+                {
+                    dip = new Diplomacy
+                    {
+                        FactionA_Id = factionA,
+                        FactionB_Id = factionB,
+                        RelationScore = -100,
+                        TreatyType = "Müharibə",
+                        TreatyDuration = 24,
+                        CeasefireMonthsLeft = 0,
+                        NonAggressionMonthsLeft = 0
+                    };
+                    conn.Insert(dip);
+                }
+
+                // Faza 7.2 - Hərbi İttifaq (Call to Arms):
+                // Biri müharibəyə girdikdə, digəri də avtomatik müharibəyə qoşulur
+                List<Diplomacy> allDips = conn.Table<Diplomacy>().ToList();
+                for (int i = 0; i < allDips.Count; i++)
+                {
+                    Diplomacy d = allDips[i];
+                    if (d.IsAlliance)
+                    {
+                        if (d.FactionA_Id == factionA && d.FactionB_Id != factionB) alliesOfA.Add(d.FactionB_Id);
+                        else if (d.FactionB_Id == factionA && d.FactionA_Id != factionB) alliesOfA.Add(d.FactionA_Id);
+
+                        if (d.FactionA_Id == factionB && d.FactionB_Id != factionA) alliesOfB.Add(d.FactionB_Id);
+                        else if (d.FactionB_Id == factionB && d.FactionA_Id != factionA) alliesOfB.Add(d.FactionA_Id);
+                    }
+                }
+
+                // Fraksiya A-nın müttəfiqləri Fraksiya B-yə müharibə elan edir
+                for (int i = 0; i < alliesOfA.Count; i++)
+                {
+                    int allyId = alliesOfA[i];
+                    SetDirectWar(conn, allyId, factionB);
+                }
+
+                // Fraksiya B-nin müttəfiqləri Fraksiya A-ya qarşı müdafiə müharibəsinə qoşulur
+                for (int i = 0; i < alliesOfB.Count; i++)
+                {
+                    int allyId = alliesOfB[i];
+                    SetDirectWar(conn, allyId, factionA);
+                }
+            });
+
+            Debug.LogWarning($"[MilitaryAndDiplomacyController] MÜHARİBƏ ELAN EDİLDİ! Fraksiya {factionA} <-> Fraksiya {factionB}");
+            OnWarDeclared?.Invoke(factionA, factionB);
+
+            for (int i = 0; i < alliesOfA.Count; i++)
+            {
+                OnAllyJoinedWar?.Invoke(alliesOfA[i], factionA, factionB);
+            }
+            for (int i = 0; i < alliesOfB.Count; i++)
+            {
+                OnAllyJoinedWar?.Invoke(alliesOfB[i], factionB, factionA);
+            }
+
+            // Gizli ittifaqı (Secret Pact) olan qubernatorların xəyanətini işə salırıq
+            PoliticalController pol = PoliticalController.Instance;
+            if (pol != null)
+            {
+                pol.TriggerSecretPactBetrayal(factionB, factionA, db);
+                pol.TriggerSecretPactBetrayal(factionA, factionB, db);
+            }
+
+            return true;
+        }
+
+        private void SetDirectWar(SQLite.SQLiteConnection conn, int factionX, int factionY)
+        {
+            if (factionX == factionY) return;
+
+            Diplomacy dip = conn.Table<Diplomacy>().FirstOrDefault(d =>
+                (d.FactionA_Id == factionX && d.FactionB_Id == factionY) ||
+                (d.FactionA_Id == factionY && d.FactionB_Id == factionX));
+
+            if (dip != null)
+            {
+                dip.TreatyType = "Müharibə";
+                dip.RelationScore = -100;
+                dip.CeasefireMonthsLeft = 0;
+                dip.NonAggressionMonthsLeft = 0;
+                dip.TreatyDuration = 24;
+                conn.Update(dip);
+            }
+            else
+            {
+                dip = new Diplomacy
+                {
+                    FactionA_Id = factionX,
+                    FactionB_Id = factionY,
+                    RelationScore = -100,
+                    TreatyType = "Müharibə",
+                    TreatyDuration = 24,
+                    CeasefireMonthsLeft = 0,
+                    NonAggressionMonthsLeft = 0
+                };
+                conn.Insert(dip);
+            }
+
+            Debug.LogWarning($"[MilitaryAndDiplomacyController] MÜTTƏFİQ DÖYÜŞƏ QOŞULDU! Fraksiya #{factionX} və Fraksiya #{factionY} arasında müharibə vəziyyəti yarandı.");
+        }
+
+        #endregion
     }
 }

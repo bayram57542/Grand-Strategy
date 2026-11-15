@@ -23,6 +23,16 @@ namespace GrandStrategy.Database.Models
         public int Infants { get; set; }
 
         /// <summary>
+        /// Körpələr (Babies) sinfi üçün Faza 5 uyğunluq xassəsi.
+        /// </summary>
+        [Ignore]
+        public int Babies
+        {
+            get => Infants;
+            set => Infants = value;
+        }
+
+        /// <summary>
         /// Gənclərin sayı (elit ordu potensialı).
         /// </summary>
         public int Youths { get; set; }

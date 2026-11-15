@@ -68,8 +68,9 @@ namespace GrandStrategy.Core
 
         /// <summary>
         /// Tək bir əyalətin əhalisinə Aylıq demoqrafik qaydaları (Doğum və Yaralıların sağalması/ölümü) tətbiq edir.
+        /// BirthRateModifier (Faza 6C) doğum dərəcəsini çoxaldır və ya azaldır (məsələn fövqəladə vəziyyətdə 0.2x).
         /// </summary>
-        public void ApplyMonthlyRulesToPopulation(Population pop, int developmentLevel)
+        public void ApplyMonthlyRulesToPopulation(Population pop, int developmentLevel, float birthRateModifier = 1.0f)
         {
             if (pop == null)
             {
@@ -79,8 +80,9 @@ namespace GrandStrategy.Core
             int currentAdults = pop.Adults;
             int currentWounded = pop.Wounded;
 
-            // 1. Doğum Səviyyəsi: Adults sayının 0.5% - 0.8%-i qədər yeni Infants doğulur
-            float birthRate = CalculateEffectiveBirthRate(developmentLevel);
+            // 1. Doğum Səviyyəsi: Adults sayının 0.5% - 0.8%-i qədər yeni Infants doğulur (BirthRateModifier nəzərə alınır)
+            float effectiveModifier = Mathf.Max(0f, birthRateModifier);
+            float birthRate = CalculateEffectiveBirthRate(developmentLevel) * effectiveModifier;
             int newBirths = Mathf.RoundToInt(currentAdults * birthRate);
 
             // 2. Yaralıların Sağalması: Wounded sinfinin 30%-i sağalıb Adults olur, 5%-i ölür
@@ -114,9 +116,10 @@ namespace GrandStrategy.Core
             int startYouths = pop.Youths;
             int startAdults = pop.Adults;
             int startElders = pop.Elders;
+            int startWounded = pop.Wounded;
 
             // 1. Yaşlanma (Keçid Mexanikası):
-            // - Infants sinfinin 15%-i -> Youths
+            // - Babies/Infants sinfinin 15%-i -> Youths
             // - Youths sinfinin 10%-i -> Adults
             // - Adults sinfinin 2%-i -> Elders
             int infantsToYouths = Mathf.Clamp(Mathf.RoundToInt(startInfants * yearlyInfantToYouthRate), 0, startInfants);
@@ -124,18 +127,22 @@ namespace GrandStrategy.Core
             int adultsToElders = Mathf.Clamp(Mathf.RoundToInt(startAdults * yearlyAdultToElderRate), 0, startAdults);
 
             // 2. Təbii Ölüm:
-            // - Elders sinfinin 20%-i dünyasını dəyişir
+            // - Elders sinfinin 20%-i dünyasını dəyişir (silinir)
             int eldersDied = Mathf.Clamp(Mathf.RoundToInt(startElders * yearlyElderDeathRate), 0, startElders);
+
+            // 3. Yaralıların Sağalması (Wounded -> Adults)
+            int healedFromWounded = startWounded;
 
             pop.Infants = startInfants - infantsToYouths;
             pop.Youths = startYouths + infantsToYouths - youthsToAdults;
-            pop.Adults = startAdults + youthsToAdults - adultsToElders;
+            pop.Adults = startAdults + youthsToAdults - adultsToElders + healedFromWounded;
             pop.Elders = startElders + adultsToElders - eldersDied;
+            pop.Wounded = 0;
         }
 
         /// <summary>
         /// Hər Aylıq Tick-də DatabaseManager daxilindəki bütün əyalətlərin Doğum və Yaralıların sağalması
-        /// məntiqini vahid RunInTransaction daxilində toplu şəkildə yeniləyir.
+        /// məntiqini vahid RunInTransaction daxilində toplu şəkildə yeniləyir (Auto-save).
         /// </summary>
         public void ProcessMonthlyDemographics(DatabaseManager dbManager, int month, int year)
         {
@@ -148,26 +155,47 @@ namespace GrandStrategy.Core
             dbManager.RunInTransaction(conn =>
             {
                 List<Province> provinces = conn.Table<Province>().ToList();
-                var devLevelsByProvince = new Dictionary<int, int>(provinces.Count);
+                List<Nation> nations = conn.Table<Nation>().ToList();
+                var provById = new Dictionary<int, Province>(provinces.Count);
                 foreach (var prov in provinces)
                 {
-                    devLevelsByProvince[prov.Id] = prov.DevelopmentLevel;
+                    provById[prov.Id] = prov;
                 }
 
                 List<Population> populations = conn.Table<Population>().ToList();
                 foreach (var pop in populations)
                 {
-                    int devLevel = devLevelsByProvince.TryGetValue(pop.ProvinceId, out int level) ? level : 1;
-                    ApplyMonthlyRulesToPopulation(pop, devLevel);
+                    int devLevel = provById.TryGetValue(pop.ProvinceId, out Province prov) ? prov.DevelopmentLevel : 1;
+                    float birthModifier = prov != null ? prov.BirthRateModifier : 1.0f;
+                    ApplyMonthlyRulesToPopulation(pop, devLevel, birthModifier);
+                    if (prov != null)
+                    {
+                        prov.Babies = pop.Infants;
+                        prov.Youths = pop.Youths;
+                        prov.Adults = pop.Adults;
+                        prov.Elders = pop.Elders;
+                        prov.Wounded = pop.Wounded;
+                    }
+                }
+
+                for (int i = 0; i < provinces.Count && i < nations.Count; i++)
+                {
+                    nations[i].Babies = provinces[i].Babies;
+                    nations[i].Youths = provinces[i].Youths;
+                    nations[i].Adults = provinces[i].Adults;
+                    nations[i].Elders = provinces[i].Elders;
+                    nations[i].Wounded = provinces[i].Wounded;
                 }
 
                 conn.UpdateAll(populations, runInTransaction: false);
+                conn.UpdateAll(provinces, runInTransaction: false);
+                conn.UpdateAll(nations, runInTransaction: false);
             });
         }
 
         /// <summary>
         /// Hər İllik Tick-də DatabaseManager daxilindəki bütün əyalətlərin Yaşlanma və Təbii Ölüm
-        /// məntiqini vahid RunInTransaction daxilində toplu şəkildə yeniləyir.
+        /// məntiqini vahid RunInTransaction daxilində toplu şəkildə yeniləyir (Auto-save).
         /// </summary>
         public void ProcessYearlyDemographics(DatabaseManager dbManager, int year)
         {
@@ -179,14 +207,125 @@ namespace GrandStrategy.Core
 
             dbManager.RunInTransaction(conn =>
             {
+                List<Province> provinces = conn.Table<Province>().ToList();
+                List<Nation> nations = conn.Table<Nation>().ToList();
+                var provById = new Dictionary<int, Province>(provinces.Count);
+                foreach (var prov in provinces)
+                {
+                    provById[prov.Id] = prov;
+                }
+
                 List<Population> populations = conn.Table<Population>().ToList();
                 foreach (var pop in populations)
                 {
                     ApplyYearlyRulesToPopulation(pop);
+                    if (provById.TryGetValue(pop.ProvinceId, out Province prov))
+                    {
+                        prov.Babies = pop.Infants;
+                        prov.Youths = pop.Youths;
+                        prov.Adults = pop.Adults;
+                        prov.Elders = pop.Elders;
+                        prov.Wounded = pop.Wounded;
+                    }
+                }
+
+                for (int i = 0; i < provinces.Count && i < nations.Count; i++)
+                {
+                    nations[i].Babies = provinces[i].Babies;
+                    nations[i].Youths = provinces[i].Youths;
+                    nations[i].Adults = provinces[i].Adults;
+                    nations[i].Elders = provinces[i].Elders;
+                    nations[i].Wounded = provinces[i].Wounded;
                 }
 
                 conn.UpdateAll(populations, runInTransaction: false);
+                conn.UpdateAll(provinces, runInTransaction: false);
+                conn.UpdateAll(nations, runInTransaction: false);
             });
+        }
+
+        /// <summary>
+        /// Faza 6C - Yaralıların Edamı (Sərt Qərar):
+        /// Oyunçu ərzağa qənaət etmək üçün bu əmri verə bilər.
+        /// Nəticədə əyalətdəki Wounded sayı 0 olur (ərzaq xərci azalır),
+        /// lakin cəza olaraq anında PublicOrder -= 40 düşür.
+        /// </summary>
+        public bool ExecuteWounded(string provinceId, DatabaseManager dbManager = null)
+        {
+            if (string.IsNullOrWhiteSpace(provinceId))
+            {
+                Debug.LogWarning("[DemographicsController] ExecuteWounded uğursuz: provinceId boşdur.");
+                return false;
+            }
+
+            if (!int.TryParse(provinceId, out int id))
+            {
+                string digits = System.Text.RegularExpressions.Regex.Match(provinceId, @"\d+").Value;
+                if (!int.TryParse(digits, out id))
+                {
+                    Debug.LogWarning($"[DemographicsController] ExecuteWounded uğursuz: '{provinceId}' ədədə çevrilə bilmədi.");
+                    return false;
+                }
+            }
+
+            return ExecuteWounded(id, dbManager);
+        }
+
+        /// <summary>
+        /// Faza 6C - Yaralıların Edamı (int ID ilə icra).
+        /// </summary>
+        public bool ExecuteWounded(int provinceId, DatabaseManager dbManager = null)
+        {
+            DatabaseManager db = dbManager != null ? dbManager : DatabaseManager.Instance;
+            if (db == null)
+            {
+                db = FindAnyObjectByType<DatabaseManager>();
+            }
+
+            if (db == null || !db.IsConnected)
+            {
+                Debug.LogWarning("[DemographicsController] ExecuteWounded uğursuz: DatabaseManager hazır deyil.");
+                return false;
+            }
+
+            bool executed = false;
+            db.RunInTransaction(conn =>
+            {
+                Province prov = conn.Table<Province>().FirstOrDefault(p => p.Id == provinceId);
+                if (prov == null)
+                {
+                    Debug.LogWarning($"[DemographicsController] ExecuteWounded: #{provinceId} nömrəli əyalət tapılmadı.");
+                    return;
+                }
+
+                Population pop = conn.Table<Population>().FirstOrDefault(p => p.ProvinceId == provinceId);
+                int killedWounded = prov.Wounded;
+
+                prov.Wounded = 0;
+                prov.PublicOrder = Mathf.Clamp(prov.PublicOrder - 40f, 0f, 100f);
+                conn.Update(prov);
+
+                if (pop != null)
+                {
+                    pop.Wounded = 0;
+                    conn.Update(pop);
+                }
+
+                Nation nat = conn.Table<Nation>().FirstOrDefault(n => n.Id == prov.OwnerFactionId);
+                if (nat != null)
+                {
+                    nat.Wounded = prov.Wounded;
+                    conn.Update(nat);
+                }
+
+                executed = true;
+                Debug.LogWarning(
+                    $"[DemographicsController] SƏRT QƏRAR İCRA EDİLDİ! -> Əyalət '{prov.Name}': " +
+                    $"{killedWounded} yaralı edam edildi (Wounded=0). " +
+                    $"Xalqın Moralı kəskin düşdü: PublicOrder -40 -> {prov.PublicOrder:F0}/100.");
+            });
+
+            return executed;
         }
     }
 }
