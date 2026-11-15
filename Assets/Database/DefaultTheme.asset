@@ -1,0 +1,23 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: ea183049b77d468eb941913715c0e25a, type: 3}
+  m_Name: DefaultTheme
+  m_EditorClassIdentifier: Assembly-CSharp::GrandStrategy.UI.UIThemeProfile
+  panelBackground: {fileID: 0}
+  borderDecoration: {fileID: 0}
+  buttonNormal: {fileID: 0}
+  primaryBorderColor: {r: 0.773, g: 0.627, b: 0.349, a: 1}
+  panelBackgroundColor: {r: 0.067, g: 0.067, b: 0.067, a: 0.88}
+  secondaryHeaderColor: {r: 0.11, g: 0.13, b: 0.17, a: 0.95}
+  goldTextColor: {r: 0.945, g: 0.769, b: 0.059, a: 1}
+  mainFont: {fileID: 11400000, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
+  titleFont: {fileID: 11400000, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}

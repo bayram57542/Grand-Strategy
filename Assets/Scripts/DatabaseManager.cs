@@ -101,6 +101,8 @@ namespace GrandStrategy.Database
                     {
                         SeedAndTestDummyData(forceReseed: false);
                     }
+
+                    EnsureDiplomacyTablesAndSeed(forceReseed: false);
                 }
 
                 return verified;
@@ -132,8 +134,251 @@ namespace GrandStrategy.Database
             _connection.CreateTable<Army>();
             _connection.CreateTable<Leader>();
             _connection.CreateTable<Caravan>();
+            _connection.CreateTable<Faction>();
+            _connection.CreateTable<FactionRelation>();
+            _connection.CreateTable<DiplomaticAgreement>();
 
-            Debug.Log("[DatabaseManager] ORM Cədvəlləri yaradıldı/təsdiqləndi: Nations, Provinces, Populations, Economies, Diplomacies, Armies, Leaders, Caravans.");
+            // Mövcud cədvəllər üçün geriyə uyğunluq sütunları
+            TryAddColumnIfMissing("Nations", "PrimaryMotive", "TEXT DEFAULT 'Consolidation'");
+            TryAddColumnIfMissing("Factions", "Treasury", "REAL DEFAULT 1000");
+            TryAddColumnIfMissing("Factions", "DiplomaticReputation", "INTEGER DEFAULT 50");
+            TryAddColumnIfMissing("Factions", "PrimaryMotive", "TEXT DEFAULT 'Consolidation'");
+
+            Debug.Log("[DatabaseManager] ORM Cədvəlləri yaradıldı/təsdiqləndi: Nations, Provinces, Populations, Economies, Diplomacies, Armies, Leaders, Caravans, Factions, FactionRelations, DiplomaticAgreements.");
+        }
+
+        private class SqliteColumnInfo
+        {
+            public string name { get; set; }
+        }
+
+        private void TryAddColumnIfMissing(string tableName, string columnName, string columnDefSql)
+        {
+            if (_connection == null) return;
+
+            try
+            {
+                var columns = _connection.Query<SqliteColumnInfo>($"PRAGMA table_info({tableName});");
+                bool exists = false;
+                for (int i = 0; i < columns.Count; i++)
+                {
+                    if (string.Equals(columns[i].name, columnName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        exists = true;
+                        break;
+                    }
+                }
+
+                if (!exists)
+                {
+                    _connection.Execute($"ALTER TABLE {tableName} ADD COLUMN {columnName} {columnDefSql};");
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[DatabaseManager] {tableName}.{columnName} sütunu əlavə edilərkən xəbərdarlıq: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Diplomatiya cədvəllərinin (Factions, FactionRelations, DiplomaticAgreements) 1187 tarixi məlumatları ilə hazır olmasını təmin edir.
+        /// </summary>
+        public void EnsureDiplomacyTablesAndSeed(bool forceReseed = false)
+        {
+            if (_connection == null)
+            {
+                if (!InitializeDatabase()) return;
+            }
+
+            _connection.CreateTable<Faction>();
+            _connection.CreateTable<FactionRelation>();
+            _connection.CreateTable<DiplomaticAgreement>();
+
+            int factionCount = _connection.ExecuteScalar<int>("SELECT COUNT(*) FROM Factions;");
+            if (!forceReseed && factionCount > 0)
+            {
+                int relCount = _connection.ExecuteScalar<int>("SELECT COUNT(*) FROM FactionRelations;");
+                if (relCount > 0)
+                {
+                    return;
+                }
+            }
+
+            _connection.RunInTransaction(() =>
+            {
+                if (forceReseed)
+                {
+                    _connection.Execute("DELETE FROM DiplomaticAgreements;");
+                    _connection.Execute("DELETE FROM FactionRelations;");
+                    _connection.Execute("DELETE FROM Factions;");
+                }
+
+                if (forceReseed || _connection.ExecuteScalar<int>("SELECT COUNT(*) FROM Factions;") == 0)
+                {
+                    var initialFactions = new[]
+                    {
+                        new Faction { ID = 1, Name = "Eldəgəzlər (Atabəylər)", RulerName = "Qızıl Arslan", GovernmentType = "Atabəylik / Sultanlıq", Treasury = 4250f, DiplomaticReputation = 72, PrimaryMotive = "Consolidation", MilitaryPower = 28500, ColorHex = "#1F618D" },
+                        new Faction { ID = 2, Name = "Şirvanşahlar Dövləti", RulerName = "I Axsitan", GovernmentType = "Şahlıq (Monarxiya)", Treasury = 2800f, DiplomaticReputation = 80, PrimaryMotive = "Trade", MilitaryPower = 14200, ColorHex = "#2ECC71" },
+                        new Faction { ID = 3, Name = "Gürcüstan Krallığı", RulerName = "Çariça Tamara", GovernmentType = "Feodal Krallıq", Treasury = 3100f, DiplomaticReputation = 64, PrimaryMotive = "Expansion", MilitaryPower = 26800, ColorHex = "#78281F" },
+                        new Faction { ID = 4, Name = "Bizans İmperiyası", RulerName = "II İsaak Angelos", GovernmentType = "İmperiya", Treasury = 5400f, DiplomaticReputation = 48, PrimaryMotive = "Consolidation", MilitaryPower = 31000, ColorHex = "#6E2C92" },
+                        new Faction { ID = 5, Name = "Rum Sultanlığı", RulerName = "II Qılınc Arslan", GovernmentType = "Sultanlıq", Treasury = 3650f, DiplomaticReputation = 55, PrimaryMotive = "Expansion", MilitaryPower = 29400, ColorHex = "#C0392B" },
+                        new Faction { ID = 6, Name = "Əyyubilər Dövləti", RulerName = "Səlahəddin Əyyubi", GovernmentType = "Sultanlıq", Treasury = 6100f, DiplomaticReputation = 85, PrimaryMotive = "Expansion", MilitaryPower = 42000, ColorHex = "#F1C40F" },
+                        new Faction { ID = 7, Name = "Abbasi Xilafəti", RulerName = "Ən-Nasir Lidinillah", GovernmentType = "Xilafət", Treasury = 4900f, DiplomaticReputation = 78, PrimaryMotive = "Trade", MilitaryPower = 18500, ColorHex = "#1C2833" }
+                    };
+
+                    for (int i = 0; i < initialFactions.Length; i++)
+                    {
+                        _connection.InsertOrReplace(initialFactions[i]);
+                    }
+                }
+
+                if (forceReseed || _connection.ExecuteScalar<int>("SELECT COUNT(*) FROM FactionRelations;") == 0)
+                {
+                    var initialRelations = new[]
+                    {
+                        new FactionRelation { Faction1_ID = 1, Faction2_ID = 2, RelationScore = 75, Status = FactionRelation.GetStatusForScore(75) },
+                        new FactionRelation { Faction1_ID = 1, Faction2_ID = 3, RelationScore = -45, Status = FactionRelation.GetStatusForScore(-45) },
+                        new FactionRelation { Faction1_ID = 1, Faction2_ID = 4, RelationScore = -10, Status = FactionRelation.GetStatusForScore(-10) },
+                        new FactionRelation { Faction1_ID = 1, Faction2_ID = 5, RelationScore = 15, Status = FactionRelation.GetStatusForScore(15) },
+                        new FactionRelation { Faction1_ID = 1, Faction2_ID = 6, RelationScore = 65, Status = FactionRelation.GetStatusForScore(65) },
+                        new FactionRelation { Faction1_ID = 1, Faction2_ID = 7, RelationScore = 50, Status = FactionRelation.GetStatusForScore(50) },
+                        new FactionRelation { Faction1_ID = 3, Faction2_ID = 4, RelationScore = 40, Status = FactionRelation.GetStatusForScore(40) },
+                        new FactionRelation { Faction1_ID = 4, Faction2_ID = 5, RelationScore = -75, Status = FactionRelation.GetStatusForScore(-75) },
+                        new FactionRelation { Faction1_ID = 5, Faction2_ID = 6, RelationScore = -30, Status = FactionRelation.GetStatusForScore(-30) }
+                    };
+
+                    for (int i = 0; i < initialRelations.Length; i++)
+                    {
+                        _connection.Insert(initialRelations[i]);
+                    }
+                }
+
+                if (forceReseed || _connection.ExecuteScalar<int>("SELECT COUNT(*) FROM DiplomaticAgreements;") == 0)
+                {
+                    _connection.Insert(new DiplomaticAgreement
+                    {
+                        SourceFaction_ID = 1,
+                        TargetFaction_ID = 2,
+                        Type = "Ticarət",
+                        DurationMonths = 36
+                    });
+                    _connection.Insert(new DiplomaticAgreement
+                    {
+                        SourceFaction_ID = 1,
+                        TargetFaction_ID = 6,
+                        Type = "Müdafiə",
+                        DurationMonths = 24
+                    });
+                }
+            });
+
+            Debug.Log("[DatabaseManager] 1187 tarixi Diplomatiya verilənlər bazası (7 Dövlət, Münasibətlər və Müqavilələr) təsdiqləndi/yükləndi.");
+        }
+
+        public void ResetDiplomacyDataToHistorical1187()
+        {
+            EnsureDiplomacyTablesAndSeed(forceReseed: true);
+        }
+
+        public System.Collections.Generic.List<Faction> GetAllFactions()
+        {
+            EnsureDiplomacyTablesAndSeed(forceReseed: false);
+            return _connection.Query<Faction>("SELECT * FROM Factions ORDER BY ID ASC;");
+        }
+
+        public Faction GetFactionById(int factionId)
+        {
+            EnsureDiplomacyTablesAndSeed(forceReseed: false);
+            var list = _connection.Query<Faction>("SELECT * FROM Factions WHERE ID = ? LIMIT 1;", factionId);
+            return list.Count > 0 ? list[0] : null;
+        }
+
+        public void UpsertFaction(Faction faction)
+        {
+            if (faction == null) return;
+            EnsureDiplomacyTablesAndSeed(forceReseed: false);
+            _connection.InsertOrReplace(faction);
+        }
+
+        public FactionRelation GetFactionRelation(int faction1Id, int faction2Id)
+        {
+            EnsureDiplomacyTablesAndSeed(forceReseed: false);
+            FactionRelation.NormalizePair(faction1Id, faction2Id, out int minId, out int maxId);
+            var list = _connection.Query<FactionRelation>(
+                "SELECT * FROM FactionRelations WHERE (Faction1_ID = ? AND Faction2_ID = ?) OR (Faction1_ID = ? AND Faction2_ID = ?) LIMIT 1;",
+                minId, maxId, maxId, minId);
+            return list.Count > 0 ? list[0] : null;
+        }
+
+        public System.Collections.Generic.List<FactionRelation> GetAllRelationsForFaction(int factionId)
+        {
+            EnsureDiplomacyTablesAndSeed(forceReseed: false);
+            return _connection.Query<FactionRelation>(
+                "SELECT * FROM FactionRelations WHERE Faction1_ID = ? OR Faction2_ID = ?;",
+                factionId, factionId);
+        }
+
+        public void UpsertFactionRelation(FactionRelation relation)
+        {
+            if (relation == null) return;
+            EnsureDiplomacyTablesAndSeed(forceReseed: false);
+
+            FactionRelation.NormalizePair(relation.Faction1_ID, relation.Faction2_ID, out int minId, out int maxId);
+            relation.Faction1_ID = minId;
+            relation.Faction2_ID = maxId;
+
+            var existing = GetFactionRelation(minId, maxId);
+            if (existing != null)
+            {
+                existing.Faction1_ID = minId;
+                existing.Faction2_ID = maxId;
+                existing.RelationScore = relation.RelationScore;
+                existing.Status = relation.Status;
+                _connection.Update(existing);
+                relation.ID = existing.ID;
+            }
+            else
+            {
+                _connection.Insert(relation);
+            }
+        }
+
+        public System.Collections.Generic.List<DiplomaticAgreement> GetAgreementsBetween(int faction1Id, int faction2Id)
+        {
+            EnsureDiplomacyTablesAndSeed(forceReseed: false);
+            return _connection.Query<DiplomaticAgreement>(
+                "SELECT * FROM DiplomaticAgreements WHERE (SourceFaction_ID = ? AND TargetFaction_ID = ?) OR (SourceFaction_ID = ? AND TargetFaction_ID = ?);",
+                faction1Id, faction2Id, faction2Id, faction1Id);
+        }
+
+        public System.Collections.Generic.List<DiplomaticAgreement> GetAgreementsForFaction(int factionId)
+        {
+            EnsureDiplomacyTablesAndSeed(forceReseed: false);
+            return _connection.Query<DiplomaticAgreement>(
+                "SELECT * FROM DiplomaticAgreements WHERE SourceFaction_ID = ? OR TargetFaction_ID = ?;",
+                factionId, factionId);
+        }
+
+        public void InsertDiplomaticAgreement(DiplomaticAgreement agreement)
+        {
+            if (agreement == null) return;
+            EnsureDiplomacyTablesAndSeed(forceReseed: false);
+            _connection.Insert(agreement);
+        }
+
+        public void UpdateDiplomaticAgreement(DiplomaticAgreement agreement)
+        {
+            if (agreement == null) return;
+            EnsureDiplomacyTablesAndSeed(forceReseed: false);
+            _connection.Update(agreement);
+        }
+
+        public int DeleteAgreementsBetween(int faction1Id, int faction2Id)
+        {
+            EnsureDiplomacyTablesAndSeed(forceReseed: false);
+            return _connection.Execute(
+                "DELETE FROM DiplomaticAgreements WHERE (SourceFaction_ID = ? AND TargetFaction_ID = ?) OR (SourceFaction_ID = ? AND TargetFaction_ID = ?);",
+                faction1Id, faction2Id, faction2Id, faction1Id);
         }
 
         /// <summary>
@@ -530,6 +775,263 @@ namespace GrandStrategy.Database
             {
                 OnTickDatabaseTransaction?.Invoke(conn, currentTick);
             });
+        }
+
+        /// <summary>
+        /// Faza 10.1 - Əyalətin SQLite bazasından real iqtisadi və demoqrafik məlumatlarını oxuyur.
+        /// Əgər əyalət bazada yoxdursa, tarixi/stabil deterministik formul tətbiq edir və avtomatik bazaya qeyd edir.
+        /// </summary>
+        public ProvinceEconomyData GetProvinceEconomyData(int provinceId, string provinceName = null, string adminCountry = null, bool autoCreateIfMissing = true)
+        {
+            if (!IsConnected && !InitializeDatabase())
+            {
+                Debug.LogWarning("[DatabaseManager] Verilənlər bazası bağlantısı açıla bilmədi, ehtiyat formul tətbiq olunur.");
+            }
+
+            Province prov = null;
+            if (_connection != null)
+            {
+                try
+                {
+                    if (provinceId > 0)
+                    {
+                        prov = _connection.Table<Province>().FirstOrDefault(p => p.Id == provinceId);
+                    }
+                    if (prov == null && !string.IsNullOrEmpty(provinceName))
+                    {
+                        string searchName = provinceName.Trim();
+                        prov = _connection.Table<Province>().FirstOrDefault(p => p.Name.ToLower() == searchName.ToLower());
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning($"[DatabaseManager] Əyalət sorğulanarkən xəta: {ex.Message}");
+                }
+            }
+
+            // 1. Bazada əyalət tapıldısa, bağlı Population və Economy cədvəllərindən oxuyuruq
+            if (prov != null)
+            {
+                Population pop = null;
+                Economy eco = null;
+                try
+                {
+                    pop = _connection.Table<Population>().FirstOrDefault(p => p.ProvinceId == prov.Id);
+                    eco = _connection.Table<Economy>().FirstOrDefault(e => e.ProvinceId == prov.Id);
+                }
+                catch { }
+
+                int totalPop = pop != null ? pop.TotalPopulation : (prov.Adults + prov.Youths + prov.Babies + prov.Elders + prov.Wounded);
+                if (totalPop <= 0) totalPop = 50000;
+
+                float goldIncome = eco != null && eco.LocalTaxIncome > 0 ? eco.LocalTaxIncome : Mathf.Max(prov.Adults * 0.5f, 25f);
+                float foodProd = eco != null && eco.FoodProduction > 0 ? eco.FoodProduction : Mathf.Max(prov.Adults * 0.12f, 30f);
+                float ironProd = prov.Iron > 0 ? prov.Iron : (eco != null && eco.RawMaterials > 0 ? eco.RawMaterials : 15f);
+
+                string pLower = prov.Name != null ? prov.Name.ToLower() : "";
+                if ((pLower.Contains("istanbul") || pLower.Contains("constantinople")) && totalPop < 100000)
+                {
+                    prov.Adults = 108000;
+                    prov.Youths = 60000;
+                    prov.Babies = 36000;
+                    prov.Elders = 24000;
+                    prov.Wounded = 12000;
+                    prov.Gold = 1850f;
+                    prov.Food = 1600f;
+                    prov.Iron = 48f;
+                    prov.DevelopmentLevel = 10;
+                    prov.StrategicResourceType = "Silk";
+                    _connection.Update(prov);
+
+                    if (pop != null)
+                    {
+                        pop.Adults = prov.Adults;
+                        pop.Youths = prov.Youths;
+                        pop.Infants = prov.Babies;
+                        pop.Elders = prov.Elders;
+                        pop.Wounded = prov.Wounded;
+                        _connection.Update(pop);
+                    }
+                    if (eco != null)
+                    {
+                        eco.LocalTaxIncome = 185f;
+                        eco.FoodProduction = 160f;
+                        eco.RawMaterials = 48f;
+                        eco.LuxuryGoods = 40f;
+                        _connection.Update(eco);
+                    }
+
+                    totalPop = 240000;
+                    goldIncome = 185f;
+                    foodProd = 160f;
+                    ironProd = 48f;
+                }
+
+                return new ProvinceEconomyData(
+                    prov.Id,
+                    prov.Name,
+                    totalPop,
+                    goldIncome,
+                    foodProd,
+                    ironProd,
+                    prov.Gold,
+                    prov.Food,
+                    prov.StrategicResourceType,
+                    prov.DevelopmentLevel,
+                    prov.Climate,
+                    isFromDatabase: true
+                );
+            }
+
+            // 2. Əyalət bazada yoxdursa: Tarixi reallıqlar və ya deterministik formul
+            string targetName = !string.IsNullOrEmpty(provinceName) ? provinceName : (provinceId > 0 ? $"Province_{provinceId}" : "Bilinməyən Əyalət");
+            string lowerName = targetName.ToLower();
+
+            int popCount;
+            float goldInc;
+            float foodCount;
+            float ironCount;
+            int dev = 6;
+            string resource = "None";
+            string climate = "Temperate";
+
+            if (lowerName.Contains("gəncə") || lowerName.Contains("ganja"))
+            {
+                popCount = 85000;
+                goldInc = 75f;
+                foodCount = 95f;
+                ironCount = 65f;
+                dev = 8;
+                resource = "Silk";
+            }
+            else if (lowerName.Contains("bakı") || lowerName.Contains("baku"))
+            {
+                popCount = 52000;
+                goldInc = 62f;
+                foodCount = 58f;
+                ironCount = 42f;
+                dev = 7;
+                resource = "Iron";
+            }
+            else if (lowerName.Contains("konya") || lowerName.Contains("iconium"))
+            {
+                popCount = 94000;
+                goldInc = 82f;
+                foodCount = 115f;
+                ironCount = 54f;
+                dev = 8;
+                resource = "Horses";
+            }
+            else if (lowerName.Contains("istanbul") || lowerName.Contains("constantinople") || lowerName.Contains("konstantinopol"))
+            {
+                popCount = 240000;
+                goldInc = 185f;
+                foodCount = 160f;
+                ironCount = 48f;
+                dev = 10;
+                resource = "Silk";
+            }
+            else if (lowerName.Contains("tbilisi") || lowerName.Contains("tiflis"))
+            {
+                popCount = 68000;
+                goldInc = 68f;
+                foodCount = 72f;
+                ironCount = 38f;
+                dev = 7;
+            }
+            else
+            {
+                int absHash = Mathf.Abs(targetName.GetHashCode() ^ (provinceId * 397));
+                popCount = 25000 + (absHash % 65000);
+                goldInc = 18f + (absHash % 42);
+                foodCount = 22f + ((absHash / 7) % 68);
+                ironCount = (absHash % 3 == 0) ? (12f + (absHash % 38)) : 8f;
+                dev = 3 + (absHash % 6);
+                if (ironCount > 25f) resource = "Iron";
+                else if (absHash % 5 == 0) resource = "Silk";
+                else if (absHash % 4 == 0) resource = "Horses";
+            }
+
+            // 3. Əgər autoCreateIfMissing aktivdirsə, əyaləti SQLite bazasına yazırıq
+            if (autoCreateIfMissing && _connection != null)
+            {
+                try
+                {
+                    prov = new Province
+                    {
+                        Name = targetName,
+                        Gold = goldInc * 10f,
+                        Food = foodCount * 10f,
+                        Iron = ironCount,
+                        Adults = Mathf.RoundToInt(popCount * 0.45f),
+                        Youths = Mathf.RoundToInt(popCount * 0.25f),
+                        Babies = Mathf.RoundToInt(popCount * 0.15f),
+                        Elders = Mathf.RoundToInt(popCount * 0.10f),
+                        Wounded = Mathf.RoundToInt(popCount * 0.05f),
+                        DevelopmentLevel = dev,
+                        Climate = climate,
+                        StrategicResourceType = resource
+                    };
+                    _connection.Insert(prov);
+
+                    var newPop = new Population
+                    {
+                        ProvinceId = prov.Id,
+                        Adults = prov.Adults,
+                        Youths = prov.Youths,
+                        Infants = prov.Babies,
+                        Elders = prov.Elders,
+                        Wounded = prov.Wounded
+                    };
+                    _connection.Insert(newPop);
+
+                    var newEco = new Economy
+                    {
+                        ProvinceId = prov.Id,
+                        FoodProduction = foodCount,
+                        RawMaterials = ironCount,
+                        LocalTaxIncome = goldInc,
+                        LuxuryGoods = resource == "Silk" ? 30f : 5f
+                    };
+                    _connection.Insert(newEco);
+
+                    Debug.Log($"[DatabaseManager] Əyalət SQLite bazasına uğurla yazıldı: #{prov.Id} - {targetName} (Əhali: {popCount:N0}, Qızıl: +{goldInc:F0}/ay, Ərzaq: +{foodCount:F0}/ay, Dəmir: +{ironCount:F0}/ay)");
+
+                    return new ProvinceEconomyData(
+                        prov.Id,
+                        targetName,
+                        popCount,
+                        goldInc,
+                        foodCount,
+                        ironCount,
+                        prov.Gold,
+                        prov.Food,
+                        resource,
+                        dev,
+                        climate,
+                        isFromDatabase: true
+                    );
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning($"[DatabaseManager] Əyalət SQLite-a yazılarkən xəta: {ex.Message}");
+                }
+            }
+
+            return new ProvinceEconomyData(
+                provinceId > 0 ? provinceId : 1,
+                targetName,
+                popCount,
+                goldInc,
+                foodCount,
+                ironCount,
+                goldInc * 10f,
+                foodCount * 10f,
+                resource,
+                dev,
+                climate,
+                isFromDatabase: false
+            );
         }
 
         /// <summary>

@@ -82,6 +82,15 @@ namespace GrandStrategy.Database.Models
 
         public int Wounded { get; set; }
 
+        public string PrimaryMotive { get; set; } = "Consolidation";
+
+        [Ignore]
+        public float Treasury
+        {
+            get => Gold;
+            set => Gold = value;
+        }
+
         [Ignore]
         public int TotalPopulation => Babies + Youths + Adults + Elders + Wounded;
 

@@ -60,3 +60,10 @@ crash.dmp
 ehthumbs.db
 Thumbs.db
 Desktop.ini
+
+# Temporary files, logs and Unity crash recovery
+*.log
+Assets/_Recovery/
+Assets/_Recovery.meta
+/world_background.json
+

@@ -1070,6 +1070,13 @@ namespace GrandStrategy.Core
             LastWinnerArmyId = string.IsNullOrWhiteSpace(winnerArmyId) ? $"Army_{winnerIntId}" : winnerArmyId;
             LastDefeatedArmyId = defeatedIntId;
 
+            if (CrossSceneBattleData.ActiveProvinceId > 0)
+            {
+                bool playerWon2D = (CrossSceneBattleData.EnemyArmyId > 0 && defeatedIntId == CrossSceneBattleData.EnemyArmyId) ||
+                                   (CrossSceneBattleData.EnemyArmyId <= 0 && winnerIntId == CrossSceneBattleData.AttackerArmyId);
+                CrossSceneBattleData.RecordResult(playerWon2D);
+            }
+
             if (databaseManager != null && databaseManager.IsConnected)
             {
                 Army defeatedArmy = databaseManager.Connection.Table<Army>().FirstOrDefault(a => a.Id == defeatedIntId);

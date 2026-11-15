@@ -1,0 +1,90 @@
+{
+  "type": "FeatureCollection",
+  "name": "provinces_test",
+  "crs": {
+    "type": "name",
+    "properties": {
+      "name": "urn:ogc:def:crs:OGC:1.3:CRS84"
+    }
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "id": 1,
+        "name": "Anatolia",
+        "provinceId": 1,
+        "factionId": 1,
+        "climate": "Temperate",
+        "fillColor": "#3E8E41",
+        "borderColor": "#50E3C2"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [28.0, 36.0],
+            [42.0, 36.0],
+            [43.0, 39.5],
+            [41.5, 42.0],
+            [29.0, 42.0],
+            [27.0, 39.0],
+            [28.0, 36.0]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": 2,
+        "name": "Shirvan",
+        "provinceId": 2,
+        "factionId": 2,
+        "climate": "Arid",
+        "fillColor": "#D9822B",
+        "borderColor": "#F5A623"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [45.0, 38.5],
+            [50.5, 38.5],
+            [51.0, 41.5],
+            [48.5, 42.5],
+            [45.0, 42.0],
+            [44.0, 40.0],
+            [45.0, 38.5]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": 3,
+        "name": "Byzantine",
+        "provinceId": 3,
+        "factionId": 3,
+        "climate": "Temperate",
+        "fillColor": "#2C5282",
+        "borderColor": "#63B3ED"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [20.5, 36.0],
+            [27.0, 36.0],
+            [27.5, 39.5],
+            [27.0, 42.0],
+            [21.0, 42.5],
+            [19.5, 39.5],
+            [20.5, 36.0]
+          ]
+        ]
+      }
+    }
+  ]
+}
