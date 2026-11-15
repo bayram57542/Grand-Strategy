@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -4002,6 +4002,479 @@ namespace ProjectBootstrap
             {
                 Debug.LogError($"[FoundationVerifier] Faza 7.2 xətası: {ex}");
                 return $"ERROR: {ex}";
+            }
+        }
+
+    
+        [MenuItem("Grand Strategy/Verify/Phase 8.1 Global Trade and Dynamic Market")]
+        [CliCommand("verify_phase8_1_global_trade_and_dynamic_market", "Verify Strategic Resources (Iron, Horses, Silk), Military Dependencies (Iron for Shield Wall, Horses for Flanking), Silk PublicOrder Bonus, Dynamic Market Fluctuations (War, Siege, Peace), and Buy/Sell Resources", MainThreadRequired = true)]
+        public static string VerifyPhase8_1GlobalTradeAndDynamicMarket()
+        {
+            var report = new StringBuilder();
+            try
+            {
+                Debug.Log("=== [FoundationVerifier] FAZA 8.1: QLOBAL TİCARƏT VƏ DİNAMİK BAZAR TESTİ BAŞLADI ===");
+                report.AppendLine("================================================================================");
+                report.AppendLine("FAZA 8.1 - QLOBAL TİCARƏT: STRATEJİ RESURSLAR VƏ DİNAMİK BAZAR DOĞRULAMA");
+                report.AppendLine("================================================================================");
+
+                // 1. SƏHNƏ VƏ BAZA ƏLAQƏSİ
+                string scenePath = "Assets/Scenes/GlobalMapScene.unity";
+                var scene = EditorSceneManager.OpenScene(scenePath, OpenSceneMode.Single);
+                if (!scene.IsValid())
+                {
+                    throw new InvalidOperationException($"'{scenePath}' səhnəsi açıla bilmədi!");
+                }
+
+                var db = UnityEngine.Object.FindAnyObjectByType<DatabaseManager>() ?? new GameObject("DatabaseManager").AddComponent<DatabaseManager>();
+                var gm = UnityEngine.Object.FindAnyObjectByType<GameManager>() ?? new GameObject("GameManager").AddComponent<GameManager>();
+                var eco = UnityEngine.Object.FindAnyObjectByType<EconomyController>() ?? new GameObject("EconomyController").AddComponent<EconomyController>();
+                var mil = UnityEngine.Object.FindAnyObjectByType<MilitaryAndDiplomacyController>() ?? new GameObject("MilitaryAndDiplomacyController").AddComponent<MilitaryAndDiplomacyController>();
+                var market = UnityEngine.Object.FindAnyObjectByType<DynamicMarketController>() ?? new GameObject("DynamicMarketController").AddComponent<DynamicMarketController>();
+                var ui = UnityEngine.Object.FindAnyObjectByType<UIManager>();
+
+                db.InitializeDatabase();
+                db.SeedAndTestDummyData(forceReseed: true);
+                gm.InitializeCalendar();
+
+                // =========================================================================
+                // 1. YENİ RESURSLAR VƏ VERİLƏNLƏR BAZASI YOXLANIŞI
+                // =========================================================================
+                report.AppendLine("--------------------------------------------------------------------------------");
+                report.AppendLine("[1. Yeni Resurslar və Məlumat Bazası (Nation & Province)]");
+
+                var anadolu = db.Connection.Table<Province>().FirstOrDefault(p => p.Name == "Anadolu");
+                var shirvan = db.Connection.Table<Province>().FirstOrDefault(p => p.Name == "Şirvan");
+                var seljuk = db.Connection.Table<Nation>().FirstOrDefault(n => n.Id == 1);
+
+                if (anadolu == null || shirvan == null || seljuk == null)
+                {
+                    throw new InvalidOperationException("Əyalətlər və ya Dövlət bazada tapılmadı!");
+                }
+
+                report.AppendLine($"  -> Anadolu Resursları: Dəmir={anadolu.Iron}, At={anadolu.Horses}, İpək={anadolu.Silk}, Tip={anadolu.StrategicResourceType}");
+                report.AppendLine($"  -> Şirvan Resursları: Dəmir={shirvan.Iron}, At={shirvan.Horses}, İpək={shirvan.Silk}, Tip={shirvan.StrategicResourceType}");
+                report.AppendLine($"  -> Səlcuqlu Dövləti Xəzinəsi: Qızıl={seljuk.Gold}, Ərzaq={seljuk.Food}, Dəmir={seljuk.Iron}, At={seljuk.Horses}, İpək={seljuk.Silk}");
+
+                if (anadolu.Iron <= 0f || shirvan.Horses <= 0f || seljuk.Iron <= 0f)
+                {
+                    throw new InvalidOperationException("Anadolu üçün Iron və ya Şirvan üçün Horses bazada müsbət deyil!");
+                }
+
+                // =========================================================================
+                // 2. DİNAMİK BAZAR DALĞALANMASI (MÜHARİBƏ, MÜHASİRƏ, SÜLH)
+                // =========================================================================
+                report.AppendLine("--------------------------------------------------------------------------------");
+                report.AppendLine("[2. Dinamik Bazar Mühərriki və Qiymət Dalğalanması]");
+
+                // 2a. Sülh dövrü yoxlanışı (aktiv müharibə yoxdur)
+                db.Connection.Execute("DELETE FROM Diplomacies WHERE TreatyType = 'Müharibə' OR RelationScore <= -60;");
+                anadolu.IsBesieged = false;
+                shirvan.IsBesieged = false;
+                db.Connection.Update(anadolu);
+                db.Connection.Update(shirvan);
+
+                market.ProcessMarketFluctuations(db);
+                report.AppendLine($"  -> Sülh Dövrü Qiymətləri: Ərzaq={market.CurrentPriceFood:F1}, Dəmir={market.CurrentPriceIron:F1}, At={market.CurrentPriceHorses:F1}, İpək={market.CurrentPriceSilk:F1} (Sülh Era: {market.IsPeaceEra})");
+
+                if (!market.IsPeaceEra || market.CurrentPriceSilk <= DynamicMarketController.BasePriceSilk)
+                {
+                    throw new InvalidOperationException("Sülh dövründə İpək qiyməti artmadı!");
+                }
+
+                // 2b. Müharibə dövrü yoxlanışı (Dəmir və At qiymətləri 2.0x - 3.0x qalxmalıdır)
+                var warDip = new Diplomacy
+                {
+                    FactionA_Id = 1,
+                    FactionB_Id = 2,
+                    TreatyType = "Müharibə",
+                    RelationScore = -80,
+                    TreatyDuration = 12
+                };
+                db.Connection.Insert(warDip);
+
+                market.ProcessMarketFluctuations(db);
+                report.AppendLine($"  -> Müharibə Dövrü Qiymətləri (1 Müharibə): Dəmir={market.CurrentPriceIron:F1} (Baza: {DynamicMarketController.BasePriceIron}), At={market.CurrentPriceHorses:F1} (Baza: {DynamicMarketController.BasePriceHorses})");
+
+                if (market.CurrentPriceIron < DynamicMarketController.BasePriceIron * 2.0f ||
+                    market.CurrentPriceHorses < DynamicMarketController.BasePriceHorses * 2.0f)
+                {
+                    throw new InvalidOperationException("Müharibə başlayan kimi Dəmir və At qiymətləri 2 qat və ya daha çox artmadı!");
+                }
+
+                // 2c. Mühasirə dövrü yoxlanışı (Food 5.0x artmalıdır)
+                anadolu.IsBesieged = true;
+                db.Connection.Update(anadolu);
+
+                market.ProcessMarketFluctuations(db);
+                report.AppendLine($"  -> Mühasirə Dövrü Ərzaq Qiyməti: Ərzaq={market.CurrentPriceFood:F1} (Baza: {DynamicMarketController.BasePriceFood}, Gözlənən: 5.0x)");
+
+                if (market.CurrentPriceFood < DynamicMarketController.BasePriceFood * 5.0f)
+                {
+                    throw new InvalidOperationException("Mühasirə vəziyyətində Ərzaq qiyməti 5 qat artmadı!");
+                }
+
+                // =========================================================================
+                // 3. RESURS ALQI-SATQISI (BUYRESOURCE / SELLRESOURCE)
+                // =========================================================================
+                report.AppendLine("--------------------------------------------------------------------------------");
+                report.AppendLine("[3. Bazar Alqı-Satqı Əməliyyatları (Buy / Sell)]");
+
+                seljuk.Gold = 1000f;
+                seljuk.Food = 50f;
+                seljuk.Iron = 30f;
+                db.Connection.Update(seljuk);
+
+                float foodPrice = market.CurrentPriceFood;
+                int buyAmount = 10;
+                bool buySuccess = market.BuyResource(1, StrategicResourceType.Food, buyAmount, db);
+                var seljukAfterBuy = db.Connection.Table<Nation>().FirstOrDefault(n => n.Id == 1);
+
+                report.AppendLine($"  -> Satınalma Testi ({buyAmount} Ərzaq, Qiymət={foodPrice:F1}): Uğur={buySuccess}, Qalan Qızıl={seljukAfterBuy.Gold:F1}, Yeni Ərzaq={seljukAfterBuy.Food:F1}");
+
+                if (!buySuccess || Math.Abs(seljukAfterBuy.Food - (50f + buyAmount)) > 0.01f)
+                {
+                    throw new InvalidOperationException("Resurs satınalma (BuyResource) uğursuz oldu!");
+                }
+
+                float ironPrice = market.CurrentPriceIron;
+                int sellAmount = 10;
+                float preSellGold = seljukAfterBuy.Gold;
+                bool sellSuccess = market.SellResource(1, StrategicResourceType.Iron, sellAmount, db);
+                var seljukAfterSell = db.Connection.Table<Nation>().FirstOrDefault(n => n.Id == 1);
+
+                report.AppendLine($"  -> Satış Testi ({sellAmount} Dəmir, Qiymət={ironPrice:F1}): Uğur={sellSuccess}, Yeni Qızıl={seljukAfterSell.Gold:F1}, Qalan Dəmir={seljukAfterSell.Iron:F1}");
+
+                if (!sellSuccess || Math.Abs(seljukAfterSell.Iron - 20f) > 0.01f || seljukAfterSell.Gold <= preSellGold)
+                {
+                    throw new InvalidOperationException("Resurs satışı (SellResource) uğursuz oldu!");
+                }
+
+                // =========================================================================
+                // 4. HƏRBİ ASILILIQLAR: DƏMİR VƏ AT
+                // =========================================================================
+                report.AppendLine("--------------------------------------------------------------------------------");
+                report.AppendLine("[4. Hərbi Asılılıqlar: Dəmir (Iron) və At (Horses)]");
+
+                var testObj = new GameObject("TestToken_Phase8_1");
+                var token = testObj.AddComponent<UI_BattalionToken>();
+
+                // 4a. Dəmir Asılılığı (Kalkan Duvarı)
+                token.HasIronEquipment = false;
+                token.SetShieldWall(true);
+                report.AppendLine($"  -> Dəmir Yoxdur Testi: IsShieldWallActive={token.IsShieldWallActive}, IncomingDamageMultiplier={token.IncomingDamageMultiplier:F2}x");
+
+                if (token.IsShieldWallActive || Math.Abs(token.IncomingDamageMultiplier - 1.0f) > 0.01f)
+                {
+                    throw new InvalidOperationException("Dəmir olmadığı halda Kalkan Duvarı quruldu və ya hərbi bonus ləğv edilmədi!");
+                }
+
+                token.HasIronEquipment = true;
+                token.SetShieldWall(true);
+                report.AppendLine($"  -> Dəmir Var Testi: IsShieldWallActive={token.IsShieldWallActive}, IncomingDamageMultiplier={token.IncomingDamageMultiplier:F2}x");
+
+                if (!token.IsShieldWallActive || Math.Abs(token.IncomingDamageMultiplier - 0.40f) > 0.01f)
+                {
+                    throw new InvalidOperationException("Dəmir olduğu halda Kalkan Duvarı 0.40x zərər bonusunu tətbiq etmədi!");
+                }
+
+                // 4b. At Asılılığı (Süvari Flanking)
+                var defenderObj = new GameObject("TestDefender_Phase8_1");
+                var defender = defenderObj.AddComponent<UI_BattalionToken>();
+                token.InitializeToken(BattalionType.YouthCavalry, 1, 1, 100, true, Vector2.zero);
+
+                // At yoxdursa: Flanking bonusu ləğv edilir (1.0x)
+                token.HasHorsesMounted = false;
+                float unmountedFlankMult = UI_BattalionToken.GetDirectionalDamageMultiplier(CombatAttackDirection.Flank, token);
+                report.AppendLine($"  -> At Yoxdur Flanking Çarpanı: {unmountedFlankMult:F2}x (Gözlənən: 1.0x)");
+
+                if (Math.Abs(unmountedFlankMult - 1.0f) > 0.01f)
+                {
+                    throw new InvalidOperationException("At olmadığı halda Süvari Flanking bonusu ləğv edilmədi!");
+                }
+
+                // At varsa: Standart Flanking bonusu (1.5x)
+                token.HasHorsesMounted = true;
+                float mountedFlankMult = UI_BattalionToken.GetDirectionalDamageMultiplier(CombatAttackDirection.Flank, token);
+                report.AppendLine($"  -> At Var Flanking Çarpanı: {mountedFlankMult:F2}x (Gözlənən: 1.5x)");
+
+                if (Math.Abs(mountedFlankMult - 1.5f) > 0.01f)
+                {
+                    throw new InvalidOperationException("At olduğu halda Flanking 1.5x bonus vermədi!");
+                }
+
+                UnityEngine.Object.DestroyImmediate(testObj);
+                UnityEngine.Object.DestroyImmediate(defenderObj);
+
+                // =========================================================================
+                // 5. İPƏK BONUSU: AYLIQ MORAL (+2 PUBLICORDER)
+                // =========================================================================
+                report.AppendLine("--------------------------------------------------------------------------------");
+                report.AppendLine("[5. İpək Bonusu: Aylıq Xalqın Moralı (+2 PublicOrder)]");
+
+                seljuk.Silk = 50f;
+                db.Connection.Update(seljuk);
+
+                anadolu.IsBesieged = false;
+                anadolu.PublicOrder = 70f;
+                db.Connection.Update(anadolu);
+
+                eco.ProcessMonthlyEconomy(db, 2, 1066);
+
+                var anadoluAfterEco = db.Connection.Table<Province>().FirstOrDefault(p => p.Id == anadolu.Id);
+                report.AppendLine($"  -> İpək Var İkən Aylıq Dövr: Başlanğıc Moral=70 -> Yeni Moral={anadoluAfterEco.PublicOrder:F0} (Gözlənən: >= 72)");
+
+                if (anadoluAfterEco.PublicOrder < 72f)
+                {
+                    throw new InvalidOperationException("Xəzinədə İpək olduğu halda aylıq +2 Moral bonusu verilmədi!");
+                }
+
+                // =========================================================================
+                // 6. UI İNTEQRASİYASI YOXLANIŞI
+                // =========================================================================
+                report.AppendLine("--------------------------------------------------------------------------------");
+                report.AppendLine("[6. UI İnteqrasiyası: Qlobal Xəritə Göstəriciləri]");
+
+                if (ui != null)
+                {
+                    ui.SelectProvince(1);
+                    ui.RefreshSelectedProvinceUI();
+                    string uiText = ui.CurrentDisplayedGoldAndFood;
+                    report.AppendLine($"  -> UI Üst Panel Mətni: [{uiText}]");
+
+                    if (!uiText.Contains("Dəmir") || !uiText.Contains("At") || !uiText.Contains("İpək"))
+                    {
+                        throw new InvalidOperationException("UI göstəricisində Dəmir, At və İpək rəqəmləri əks olunmadı!");
+                    }
+                }
+
+                // =========================================================================
+                // TƏMİZLƏMƏ VƏ BƏRPA
+                // =========================================================================
+                db.SeedAndTestDummyData(forceReseed: true);
+                gm.InitializeCalendar();
+                mil.DraftArmy(db, 1);
+                mil.DraftArmy(db, 2);
+                db.CloseConnection();
+
+                EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
+                EditorSceneManager.SaveScene(EditorSceneManager.GetActiveScene());
+
+                Debug.Log("=== [FoundationVerifier] FAZA 8.1 TESTİ UĞURLA TAMAMLANDI (0 XƏTA) ===");
+                report.AppendLine("STATUS: PHASE 8.1 GLOBAL TRADE & DYNAMIC MARKET SUCCESS (0 ERRORS)");
+                return report.ToString();
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[FoundationVerifier] Faza 8.1 xətası: {ex}");
+                return report.ToString() + "\nERROR: " + ex.Message;
+            }
+        }
+
+    
+        [MenuItem("Grand Strategy/Verify/Phase 8.2 Caravans and Raiding")]
+        [CliCommand("verify_phase8_2_caravans_and_raiding", "Verify Caravan Model & SQLite Table, Auto-spawn & Movement, Delivery to Target Treasury, Raiding by Enemy Army with Loot Transfer, and 2D UI Caravan Tokens", MainThreadRequired = true)]
+        public static string VerifyPhase8_2CaravansAndRaiding()
+        {
+            var report = new StringBuilder();
+            try
+            {
+                Debug.Log("=== [FoundationVerifier] FAZA 8.2: FİZİKİ KARVANLAR VƏ YAĞMALAMA TESTİ BAŞLADI ===");
+                report.AppendLine("================================================================================");
+                report.AppendLine("FAZA 8.2 - QLOBAL TİCARƏT: FİZİKİ KARVANLAR VƏ YAĞMALAMA (RAIDING) DOĞRULAMA");
+                report.AppendLine("================================================================================");
+
+                // 1. SƏHNƏ VƏ BAZA ƏLAQƏSİ
+                string scenePath = "Assets/Scenes/GlobalMapScene.unity";
+                var scene = EditorSceneManager.OpenScene(scenePath, OpenSceneMode.Single);
+                if (!scene.IsValid())
+                {
+                    throw new InvalidOperationException($"'{scenePath}' səhnəsi açıla bilmədi!");
+                }
+
+                var db = UnityEngine.Object.FindAnyObjectByType<DatabaseManager>() ?? new GameObject("DatabaseManager").AddComponent<DatabaseManager>();
+                var gm = UnityEngine.Object.FindAnyObjectByType<GameManager>() ?? new GameObject("GameManager").AddComponent<GameManager>();
+                var trade = UnityEngine.Object.FindAnyObjectByType<TradeController>() ?? new GameObject("TradeController").AddComponent<TradeController>();
+                var mil = UnityEngine.Object.FindAnyObjectByType<MilitaryController>() ?? new GameObject("MilitaryController").AddComponent<MilitaryController>();
+                var ui = UnityEngine.Object.FindAnyObjectByType<UIManager>();
+
+                db.InitializeDatabase();
+                db.SeedAndTestDummyData(forceReseed: true);
+                gm.InitializeCalendar();
+
+                // =========================================================================
+                // 1. KARVAN MODELİ VƏ VERİLƏNLƏR BAZASI YOXLANIŞI
+                // =========================================================================
+                report.AppendLine("--------------------------------------------------------------------------------");
+                report.AppendLine("[1. Karvan Modeli və Məlumat Bazası (Caravan & DatabaseManager)]");
+
+                var caravans = db.Connection.Table<Caravan>().ToList();
+                report.AppendLine($"  -> Bazadakı İlkin Karvan Sayı: {caravans.Count}");
+
+                if (caravans.Count == 0)
+                {
+                    throw new InvalidOperationException("Caravans cədvəli və ya dummy karvan bazada tapılmadı!");
+                }
+
+                var dummy = caravans[0];
+                report.AppendLine($"  -> Dummy Karvan #{dummy.Id}: Sahibi=Fraksiya {dummy.OwnerFactionId}, Mənbə=#{dummy.SourceProvinceId} -> Hədəf=#{dummy.TargetProvinceId}, Resurs={dummy.ResourceAmount} {dummy.ResourceType}, İrəliləyiş={dummy.TravelProgress}%");
+
+                if (dummy.ResourceAmount <= 0f || string.IsNullOrEmpty(dummy.ResourceType))
+                {
+                    throw new InvalidOperationException("Dummy karvanın resurs məlumatları natamamdır!");
+                }
+
+                // =========================================================================
+                // 2. YENİ KARVANIN YARANMASI VƏ 2D XƏRİTƏ TOKENİ
+                // =========================================================================
+                report.AppendLine("--------------------------------------------------------------------------------");
+                report.AppendLine("[2. Karvanın Yaranması və 2D UI Tokeni (UI_CaravanToken)]");
+
+                var newCaravan = trade.SpawnCaravan(1, 1, 2, "Silk", 50f, db);
+                if (newCaravan == null)
+                {
+                    throw new InvalidOperationException("SpawnCaravan uğursuz oldu!");
+                }
+
+                report.AppendLine($"  -> Yeni Karvan Yaradıldı: ID=#{newCaravan.Id}, Yük=50 Silk, Mənbə=1 -> Hədəf=2");
+
+                Vector3 startPos = trade.GetCaravanCurrentPosition(newCaravan);
+                report.AppendLine($"  -> Karvanın Başlanğıc Koordinatı (Progress=0%): ({startPos.x:F2}, {startPos.y:F2})");
+
+                // =========================================================================
+                // 3. KARVANIN HƏRƏKƏTİ VƏ TƏHVİL VERİLMƏSİ (DELIVERY)
+                // =========================================================================
+                report.AppendLine("--------------------------------------------------------------------------------");
+                report.AppendLine("[3. Karvan Hərəkəti və Hədəf Xəzinəyə Təhvil Verilməsi]");
+
+                float initialProgress = newCaravan.TravelProgress;
+                trade.ProcessMonthlyTrade(db, 1, 1066);
+
+                var movedCaravan = db.Connection.Table<Caravan>().FirstOrDefault(c => c.Id == newCaravan.Id);
+                report.AppendLine($"  -> 1 Aylıq Hərəkət Sonrası: İrəliləyiş={movedCaravan.TravelProgress:F1}% (Əvvəlki={initialProgress:F1}%)");
+
+                if (movedCaravan.TravelProgress <= initialProgress)
+                {
+                    throw new InvalidOperationException("Aylıq ticarət dövründə karvan irəliləmədi!");
+                }
+
+                Vector3 movedPos = trade.GetCaravanCurrentPosition(movedCaravan);
+                report.AppendLine($"  -> Karvanın Yeni Mövqeyi: ({movedPos.x:F2}, {movedPos.y:F2})");
+
+                // Karvanı 100%-ə çatdırıb hədəf xəzinəyə resurs köçürülməsini yoxlayırıq
+                var targetNationBefore = db.Connection.Table<Nation>().FirstOrDefault(n => n.Id == 2);
+                float targetSilkBefore = targetNationBefore?.Silk ?? 0f;
+
+                trade.DeliverCaravan(movedCaravan.Id, db);
+
+                var completedCaravan = db.Connection.Table<Caravan>().FirstOrDefault(c => c.Id == movedCaravan.Id);
+                var targetNationAfter = db.Connection.Table<Nation>().FirstOrDefault(n => n.Id == 2);
+
+                report.AppendLine($"  -> Çatdırılma Yoxlanışı: IsCompleted={completedCaravan.IsCompleted}, Hədəf Dövlət #{targetNationAfter.Id} İpək: {targetSilkBefore:F0} -> {targetNationAfter.Silk:F0} (+{movedCaravan.ResourceAmount:F0})");
+
+                if (!completedCaravan.IsCompleted || targetNationAfter.Silk < targetSilkBefore + movedCaravan.ResourceAmount)
+                {
+                    throw new InvalidOperationException("Karvan çatdıqda resurs hədəf dövlətin xəzinəsinə əlavə olunmadı!");
+                }
+
+                // =========================================================================
+                // 4. YAĞMALAMA (RAIDING) MEXANİKASI VƏ QƏNİMƏT KÖÇÜRÜLMƏSİ
+                // =========================================================================
+                report.AppendLine("--------------------------------------------------------------------------------");
+                report.AppendLine("[4. Yağmalama (Raiding) Mexanikası və Qənimətin Ələ Keçirilməsi]");
+
+                // Fraksiya 1 və Fraksiya 3 arasında müharibə vəziyyəti təsdiqlənir
+                var warDip = db.Connection.Table<Diplomacy>().FirstOrDefault(d =>
+                    ((d.FactionA_Id == 1 && d.FactionB_Id == 3) || (d.FactionA_Id == 3 && d.FactionB_Id == 1)) &&
+                    d.TreatyType == "Müharibə");
+
+                if (warDip == null)
+                {
+                    warDip = new Diplomacy { FactionA_Id = 1, FactionB_Id = 3, TreatyType = "Müharibə", RelationScore = -90 };
+                    db.Connection.Insert(warDip);
+                }
+
+                // Düşmən Fraksiya 3-ə aid bir ordu yaradırıq (Əyalət 2-də yerləşir)
+                var enemyArmy = new Army
+                {
+                    OwnerFactionId = 3,
+                    LocationProvinceId = 2,
+                    YouthSoldiers = 800,
+                    AdultSoldiers = 1200,
+                    Morale = 1.0f
+                };
+                db.Connection.Insert(enemyArmy);
+
+                // Fraksiya 1-ə aid 60 Dəmir (Iron) daşıyan və Əyalət 2-yə yaxınlaşmış karvan yaradırıq
+                var vulnerableCaravan = trade.SpawnCaravan(1, 1, 2, "Iron", 60f, db);
+                vulnerableCaravan.TravelProgress = 85f; // Əyalət 2-dəki ordunun yaxınlığındadır!
+                db.Connection.Update(vulnerableCaravan);
+
+                var raiderNationBefore = db.Connection.Table<Nation>().FirstOrDefault(n => n.Id == 3);
+                float raiderIronBefore = raiderNationBefore?.Iron ?? 0f;
+
+                report.AppendLine($"  -> Düşmən Ordu #{enemyArmy.Id} (Fraksiya 3) Əyalət 2-də pusqudadır.");
+                report.AppendLine($"  -> Karvan #{vulnerableCaravan.Id} (Fraksiya 1, 60 Iron) yaxınlıqdan keçir (Progress=85%).");
+
+                // Yağmalama əmri icra edilir
+                var raidResult = mil.RaidCaravan(vulnerableCaravan.Id, enemyArmy.Id, db);
+                var raidedCaravan = db.Connection.Table<Caravan>().FirstOrDefault(c => c.Id == vulnerableCaravan.Id);
+                var raiderNationAfter = db.Connection.Table<Nation>().FirstOrDefault(n => n.Id == 3);
+
+                report.AppendLine($"  -> Yağmalama Nəticəsi: Uğur={raidResult.Success}");
+                report.AppendLine($"  -> Karvan Vəziyyəti: IsRaided={raidedCaravan.IsRaided}");
+                report.AppendLine($"  -> Qənimət Köçürülməsi: Fraksiya 3 Xəzinəsində Iron: {raiderIronBefore:F0} -> {raiderNationAfter.Iron:F0} (+{raidResult.LootedAmount:F0})");
+                report.AppendLine($"  -> Bildiriş Mesajı: [{raidResult.Message}]");
+
+                if (!raidResult.Success || !raidedCaravan.IsRaided || raiderNationAfter.Iron < raiderIronBefore + 60f)
+                {
+                    throw new InvalidOperationException("Karvan yağmalanmadı və ya qənimət yağmalayanın xəzinəsinə köçürülmədi!");
+                }
+
+                if (!raidResult.Message.Contains("KARVAN YAĞMALANDI") || !raidResult.Message.Contains("Fraksiya 3"))
+                {
+                    throw new InvalidOperationException("Yağmalama bildirişi ekranda və konsolda tələb olunan formatda çıxmadı!");
+                }
+
+                // =========================================================================
+                // 5. RADİUS ƏSASLI AVTOMATİK YAĞMALAMA (CHECKCARAVANRAIDS)
+                // =========================================================================
+                report.AppendLine("--------------------------------------------------------------------------------");
+                report.AppendLine("[5. Radius Əsaslı Avtomatik Yağmalama Testi]");
+
+                var autoVulnerableCaravan = trade.SpawnCaravan(1, 1, 2, "Silk", 75f, db);
+                autoVulnerableCaravan.TravelProgress = 90f; // Əyalət 2-yə çox yaxındır
+                db.Connection.Update(autoVulnerableCaravan);
+
+                var autoRaidResults = trade.CheckCaravanRaids(db);
+                var autoRaidedCaravan = db.Connection.Table<Caravan>().FirstOrDefault(c => c.Id == autoVulnerableCaravan.Id);
+
+                report.AppendLine($"  -> Avtomatik Yağmalama Sayı: {autoRaidResults.Count}, Karvan IsRaided={autoRaidedCaravan.IsRaided}");
+                if (autoRaidResults.Count == 0 || !autoRaidedCaravan.IsRaided)
+                {
+                    throw new InvalidOperationException("CheckCaravanRaids avtomatik yaxınlıqdakı düşmən karvanını yağmalamadı!");
+                }
+
+                // =========================================================================
+                // TƏMİZLƏMƏ VƏ BƏRPA
+                // =========================================================================
+                db.SeedAndTestDummyData(forceReseed: true);
+                gm.InitializeCalendar();
+                mil.DraftArmy(db, 1);
+                mil.DraftArmy(db, 2);
+                db.CloseConnection();
+
+                EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
+                EditorSceneManager.SaveScene(EditorSceneManager.GetActiveScene());
+
+                Debug.Log("=== [FoundationVerifier] FAZA 8.2 TESTİ UĞURLA TAMAMLANDI (0 XƏTA) ===");
+                report.AppendLine("STATUS: PHASE 8.2 CARAVANS & RAIDING SUCCESS (0 ERRORS)");
+                return report.ToString();
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[FoundationVerifier] Faza 8.2 xətası: {ex}");
+                return report.ToString() + "\nERROR: " + ex.Message;
             }
         }
 

@@ -54,6 +54,24 @@ namespace GrandStrategy.Database.Models
 
         public float Food { get; set; }
 
+        /// <summary>
+        /// Faza 8.1 - Qlobal Ticarət və Strateji Resurs: Dəmir (Iron).
+        /// Dağlıq əyalətlərdən hasil edilir, ağır silah və qalxan istehsalında (Kalkan Duvarı) istifadə olunur.
+        /// </summary>
+        public float Iron { get; set; } = 0f;
+
+        /// <summary>
+        /// Faza 8.1 - Qlobal Ticarət və Strateji Resurs: Atlar (Horses).
+        /// Düzənlik/çöl əyalətlərində yetişdirilir, süvari (Cavalry) və Flanking manevrləri üçün lazımdır.
+        /// </summary>
+        public float Horses { get; set; } = 0f;
+
+        /// <summary>
+        /// Faza 8.1 - Qlobal Ticarət və Lüks Resurs: İpək (Silk).
+        /// Xüsusi ticarət mərkəzlərindən gəlir, xəzinədə olduqda bütün əyalətlərdə hər ay xalqın moralını (+2 PublicOrder) artırır.
+        /// </summary>
+        public float Silk { get; set; } = 0f;
+
         public int Babies { get; set; }
 
         public int Youths { get; set; }
@@ -88,7 +106,7 @@ namespace GrandStrategy.Database.Models
             return $"[Nation #{Id}] Sülalə/Dövlət: {RulingDynastyName} ({Name}) | " +
                    $"İdarəetmə: {DirectControlledProvinceCount}/{MaxDirectControl} Birbaşa (Ümumi: {ControlledProvinceCount}){overextStr} | " +
                    $"Diplomatik Nüfuz: {DiplomaticReputation:F0}/100 | " +
-                   $"Gold: {Gold:F1} | Food: {Food:F1} | Ümumi Əhali: {TotalPopulation}";
+                   $"Gold: {Gold:F1} | Food: {Food:F1} | Dəmir: {Iron:F1} | At: {Horses:F1} | İpək: {Silk:F1} | Ümumi Əhali: {TotalPopulation}";
         }
     }
 }

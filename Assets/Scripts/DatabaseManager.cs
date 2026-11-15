@@ -131,8 +131,9 @@ namespace GrandStrategy.Database
             _connection.CreateTable<Diplomacy>();
             _connection.CreateTable<Army>();
             _connection.CreateTable<Leader>();
+            _connection.CreateTable<Caravan>();
 
-            Debug.Log("[DatabaseManager] ORM Cədvəlləri yaradıldı/təsdiqləndi: Nations, Provinces, Populations, Economies, Diplomacies, Armies, Leaders.");
+            Debug.Log("[DatabaseManager] ORM Cədvəlləri yaradıldı/təsdiqləndi: Nations, Provinces, Populations, Economies, Diplomacies, Armies, Leaders, Caravans.");
         }
 
         /// <summary>
@@ -158,6 +159,7 @@ namespace GrandStrategy.Database
                     {
                         if (forceReseed || existingProvinces == 0)
                         {
+                            _connection.DeleteAll<Caravan>();
                             _connection.DeleteAll<Leader>();
                             _connection.DeleteAll<Army>();
                             _connection.DeleteAll<Diplomacy>();
@@ -168,12 +170,16 @@ namespace GrandStrategy.Database
                             _connection.Execute("DELETE FROM sqlite_sequence;");
                         }
 
-                        // 1. Province (Əyalətlər) sınaq məlumatları (Faza 5-6C: Gold, Food, Demoqrafiya, Morale, Siege, BirthRate)
+                        // 1. Province (Əyalətlər) sınaq məlumatları (Faza 5-8.1: Gold, Food, Iron, Horses, Silk, Demoqrafiya, Morale, Siege, BirthRate)
                         var anadolu = new Province
                         {
                             Name = "Anadolu",
                             Gold = 5000f,
                             Food = 2500f,
+                            Iron = 150f,
+                            Horses = 25f,
+                            Silk = 5f,
+                            StrategicResourceType = "Iron",
                             Babies = 1200,
                             Youths = 2500,
                             Adults = 6800,
@@ -196,6 +202,10 @@ namespace GrandStrategy.Database
                             Name = "Şirvan",
                             Gold = 3800f,
                             Food = 1800f,
+                            Iron = 20f,
+                            Horses = 120f,
+                            Silk = 30f,
+                            StrategicResourceType = "Horses",
                             Babies = 850,
                             Youths = 800,
                             Adults = 5400,
@@ -216,7 +226,7 @@ namespace GrandStrategy.Database
                         _connection.Insert(anadolu);
                         _connection.Insert(shirvan);
 
-                        // 1b. Nation (Dövlətlər) cədvəli sınaq məlumatları (Faza 5-6D: Hakim Sülalə və İdarəetmə Həddi daxil)
+                        // 1b. Nation (Dövlətlər) cədvəli sınaq məlumatları (Faza 5-8.1: Hakim Sülalə, İdarəetmə Həddi və Resurslar)
                         var seljukNation = new Nation
                         {
                             Name = "Səlcuqlu Dövləti (Anadolu)",
@@ -226,6 +236,9 @@ namespace GrandStrategy.Database
                             MaxDirectControl = 3,
                             Gold = anadolu.Gold,
                             Food = anadolu.Food,
+                            Iron = anadolu.Iron,
+                            Horses = anadolu.Horses,
+                            Silk = anadolu.Silk,
                             Babies = anadolu.Babies,
                             Youths = anadolu.Youths,
                             Adults = anadolu.Adults,
@@ -244,6 +257,9 @@ namespace GrandStrategy.Database
                             PeakMilitaryPower = 0,
                             Gold = shirvan.Gold,
                             Food = shirvan.Food,
+                            Iron = shirvan.Iron,
+                            Horses = shirvan.Horses,
+                            Silk = shirvan.Silk,
                             Babies = shirvan.Babies,
                             Youths = shirvan.Youths,
                             Adults = shirvan.Adults,
@@ -262,6 +278,9 @@ namespace GrandStrategy.Database
                             PeakMilitaryPower = 0,
                             Gold = 4000f,
                             Food = 2000f,
+                            Iron = 40f,
+                            Horses = 30f,
+                            Silk = 150f,
                             Babies = 800,
                             Youths = 1500,
                             Adults = 4000,
@@ -371,6 +390,20 @@ namespace GrandStrategy.Database
 
                         _connection.Insert(kingLeader);
                         _connection.Insert(governorA);
+
+                        // 6. Caravans (Faza 8.2: Qlobal Ticarət və Karvanlar)
+                        var dummyCaravan = new Caravan
+                        {
+                            OwnerFactionId = 1,
+                            SourceProvinceId = anadolu.Id,
+                            TargetProvinceId = shirvan.Id,
+                            ResourceType = "Silk",
+                            ResourceAmount = 50f,
+                            TravelProgress = 20f,
+                            IsRaided = false,
+                            IsCompleted = false
+                        };
+                        _connection.Insert(dummyCaravan);
                     });
 
                     Debug.Log("[DatabaseManager] Dummy (Sınaq) məlumatları bazaya uğurla daxil edildi.");

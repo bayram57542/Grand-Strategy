@@ -114,6 +114,8 @@ MonoBehaviour:
   soldierCountText: {fileID: 1667747907646612108}
   shieldWallIndicatorImage: {fileID: 2003850040801636305}
   isRanged: 0
+  hasIronEquipment: 1
+  hasHorsesMounted: 1
 --- !u!1 &2517876832217647772
 GameObject:
   m_ObjectHideFlags: 0

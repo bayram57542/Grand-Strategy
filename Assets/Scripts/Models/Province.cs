@@ -31,6 +31,26 @@ namespace GrandStrategy.Database.Models
         public float Food { get; set; }
 
         /// <summary>
+        /// Faza 8.1 - Dəmir (Iron) ehtiyatı/istehsalı (Dağlıq əyalətlərdə hasil edilir).
+        /// </summary>
+        public float Iron { get; set; } = 0f;
+
+        /// <summary>
+        /// Faza 8.1 - Atlar (Horses) ehtiyatı/istehsalı (Düzənlik/çöl əyalətlərində yetişdirilir).
+        /// </summary>
+        public float Horses { get; set; } = 0f;
+
+        /// <summary>
+        /// Faza 8.1 - İpək (Silk) ehtiyatı/istehsalı (Yalnız xüsusi ticarət mərkəzlərindən gəlir).
+        /// </summary>
+        public float Silk { get; set; } = 0f;
+
+        /// <summary>
+        /// Əsas strateji resurs tipi: "Iron", "Horses", "Silk" və ya "None".
+        /// </summary>
+        public string StrategicResourceType { get; set; } = "None";
+
+        /// <summary>
         /// Körpələr (Babies) sinfi.
         /// </summary>
         public int Babies { get; set; }
@@ -132,7 +152,7 @@ namespace GrandStrategy.Database.Models
                 ? (IsExploited ? "Mühasirədə (İstismar Edilir)" : "Mühasirədə")
                 : "Sərbəst";
 
-            return $"[Province #{Id}] Ad: {Name} | Gold: {Gold:F1} | Food: {Food:F1} | " +
+            return $"[Province #{Id}] Ad: {Name} | Gold: {Gold:F1} | Food: {Food:F1} | Dəmir: {Iron:F1} | At: {Horses:F1} | İpək: {Silk:F1} | " +
                    $"Moral (PublicOrder): {PublicOrder:F0}/100 | Vəziyyət: {siegeInfo} | " +
                    $"Doğum Çarpanı: {BirthRateModifier * 100f:F0}% | " +
                    $"Məhsuldarlıq: {ProductivityMultiplier * 100f:F0}% (Faktiki: {EffectiveProductivityMultiplier * 100f:F0}%) | " +

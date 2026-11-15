@@ -71,6 +71,7 @@ namespace GrandStrategy.Tactical
         private Coroutine _panicCoroutine;
 
         public BattalionType Type => battalionType;
+        public BattalionType BattalionType => battalionType;
         public int ArmyId => armyId;
         public int OwnerFactionId => ownerFactionId;
         public int MaxSoldiers => maxSoldiers;
@@ -93,12 +94,53 @@ namespace GrandStrategy.Tactical
         public float CurrentAttackDamage => attackDamage;
         public float CurrentMoveSpeed => moveSpeed;
         public bool IsShieldWallActive => _isShieldWallActive;
-        public float IncomingDamageMultiplier => _isShieldWallActive ? ShieldWallIncomingDamageMultiplier : 1.0f;
+
+        /// <summary>
+        /// Faza 8.1: Dəmir Asılılığı. Dəmir yoxdursa (hasIronEquipment == false), Kalkan Duvarı bonusu ləğv edilir (1.0x zərər qəbul edir).
+        /// </summary>
+        public float IncomingDamageMultiplier => (_isShieldWallActive && hasIronEquipment) ? ShieldWallIncomingDamageMultiplier : 1.0f;
         public bool IsShieldWallIndicatorActive => shieldWallIndicatorImage != null && shieldWallIndicatorImage.gameObject.activeSelf;
         public bool IsSandstormActive => _isSandstormActive;
         public bool IsRanged => isRanged;
         public float BaseMoveSpeed => _baseMoveSpeed;
         public float BaseAttackRange => _baseAttackRange;
+
+        [Header("Faza 8.1 - Strateji Resurs Asılılıqları (Dəmir və At)")]
+        [SerializeField] private bool hasIronEquipment = true;
+        [SerializeField] private bool hasHorsesMounted = true;
+
+        /// <summary>
+        /// Dəmir təminatı: Dəmir yoxdursa, Kalkan Duvarı aktivləşə bilməz və ya hərbi bonus ləğv edilir.
+        /// </summary>
+        public bool HasIronEquipment
+        {
+            get => hasIronEquipment;
+            set
+            {
+                hasIronEquipment = value;
+                if (!hasIronEquipment && _isShieldWallActive)
+                {
+                    SetShieldWall(false);
+                }
+            }
+        }
+
+        /// <summary>
+        /// At təminatı: At yoxdursa, süvarilər sürətli hərəkət edə bilməz və Flanking bonusu ləğv edilir.
+        /// </summary>
+        public bool HasHorsesMounted
+        {
+            get => hasHorsesMounted;
+            set
+            {
+                hasHorsesMounted = value;
+                if (battalionType == BattalionType.YouthCavalry)
+                {
+                    _baseMoveSpeed = hasHorsesMounted ? 165f : 100f;
+                    RecalculateMoveSpeed();
+                }
+            }
+        }
 
         private Vector2 _facingDirection = Vector2.zero;
 
@@ -452,6 +494,14 @@ namespace GrandStrategy.Tactical
 
         public void SetShieldWall(bool active)
         {
+            if (active && !hasIronEquipment)
+            {
+                Debug.LogWarning($"[UI_BattalionToken] Dəmir yoxdur! '{name}' Kalkan Duvarı qura bilməz (Hərbi bonus ləğv edilir).");
+                _isShieldWallActive = false;
+                UpdateShieldWallVisual();
+                return;
+            }
+
             if (_isShieldWallActive == active)
             {
                 return;
@@ -510,8 +560,14 @@ namespace GrandStrategy.Tactical
             }
         }
 
-        public static float GetDirectionalDamageMultiplier(CombatAttackDirection direction)
+        public static float GetDirectionalDamageMultiplier(CombatAttackDirection direction, UI_BattalionToken attacker = null)
         {
+            if (attacker != null && !attacker.HasHorsesMounted)
+            {
+                // Faza 8.1: At Asılılığı: At yoxdursa, "Flanking" edəcək sürətli qoşun çıxarıla bilməz / flanking bonusu ləğv edilir (1.0x)
+                return 1.0f;
+            }
+
             switch (direction)
             {
                 case CombatAttackDirection.Rear:
@@ -522,6 +578,11 @@ namespace GrandStrategy.Tactical
                 default:
                     return 1.0f; // Standart zərər
             }
+        }
+
+        public static float GetDirectionalDamageMultiplier(CombatAttackDirection direction)
+        {
+            return GetDirectionalDamageMultiplier(direction, null);
         }
 
         #endregion
@@ -722,9 +783,9 @@ namespace GrandStrategy.Tactical
             _attackCooldownTimer = Mathf.Max(0.1f, attackCooldown);
             _attackTriggerCount++;
 
-            // Faza 3.1: Flanking (Yandan 1.5x) və Arxadan (2.0x) Zərbə Hesablanması
+            // Faza 3.1 & 8.1: Flanking (Yandan 1.5x) və Arxadan (2.0x) Zərbə Hesablanması (At yoxdursa 1.0x)
             CombatAttackDirection direction = DetermineAttackDirection(this, enemy);
-            float directionalMultiplier = GetDirectionalDamageMultiplier(direction);
+            float directionalMultiplier = GetDirectionalDamageMultiplier(direction, this);
             float finalDamage = attackDamage * directionalMultiplier;
 
             enemy.TakeDamage(finalDamage, direction, this);
@@ -853,7 +914,7 @@ namespace GrandStrategy.Tactical
 
             IReadOnlyList<UI_BattalionToken> candidates = battleManager != null
                 ? battleManager.ActiveBattalions
-                : FindObjectsByType<UI_BattalionToken>(FindObjectsSortMode.None);
+                : FindObjectsByType<UI_BattalionToken>();
 
             UI_BattalionToken closest = null;
             float minDist = maxSearchDistance;

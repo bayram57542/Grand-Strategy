@@ -435,6 +435,8 @@ MonoBehaviour:
   soldierCountText: {fileID: 1187532544721355979}
   shieldWallIndicatorImage: {fileID: 0}
   isRanged: 0
+  hasIronEquipment: 1
+  hasHorsesMounted: 1
   leaderId: 0
   leaderName: "S\u0259rk\u0259rd\u0259"
   isKing: 0

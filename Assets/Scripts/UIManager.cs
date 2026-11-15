@@ -84,6 +84,16 @@ namespace GrandStrategy.UI
         public string CurrentDisplayedFood => foodProductionText != null ? foodProductionText.text : string.Empty;
         public string CurrentDisplayedProductivity => productivityStatusText != null ? productivityStatusText.text : string.Empty;
         public string CurrentDisplayedConstructionStatus => constructionStatusText != null ? constructionStatusText.text : string.Empty;
+        public string LastCaravanRaidAlert { get; private set; } = string.Empty;
+
+        public void DisplayCaravanRaidAlert(string message)
+        {
+            LastCaravanRaidAlert = message;
+            if (actionStatusText != null)
+            {
+                actionStatusText.text = $"<color=red><b>{message}</b></color>";
+            }
+        }
 
         private void Awake()
         {
@@ -191,6 +201,12 @@ namespace GrandStrategy.UI
             _boundGameManager.OnMonthPassed += HandleMonthPassed;
             _boundGameManager.OnYearPassed += HandleYearPassed;
             _boundGameManager.OnGameSpeedChanged += HandleSpeedChanged;
+
+            if (TradeController.Instance != null)
+            {
+                TradeController.Instance.OnCaravanRaided -= HandleCaravanRaided;
+                TradeController.Instance.OnCaravanRaided += HandleCaravanRaided;
+            }
         }
 
         private void UnbindFromGameManagerEvents()
@@ -205,6 +221,16 @@ namespace GrandStrategy.UI
             _boundGameManager.OnYearPassed -= HandleYearPassed;
             _boundGameManager.OnGameSpeedChanged -= HandleSpeedChanged;
             _boundGameManager = null;
+
+            if (TradeController.Instance != null)
+            {
+                TradeController.Instance.OnCaravanRaided -= HandleCaravanRaided;
+            }
+        }
+
+        private void HandleCaravanRaided(RaidResult res)
+        {
+            DisplayCaravanRaidAlert(res.Message);
         }
 
         private void HandleDayPassed(int day, int month, int year)
@@ -316,7 +342,7 @@ namespace GrandStrategy.UI
             if (goldAndFoodText != null)
             {
                 string siegeTag = prov.IsBesieged ? " [MÜHASİRƏ]" : "";
-                goldAndFoodText.text = $"Qızıl: {prov.Gold:F1}  |  Ərzaq: {prov.Food:F1}  |  Moral: {prov.PublicOrder:F0}%  [{prov.Name}{siegeTag}]";
+                goldAndFoodText.text = $"Qızıl: {prov.Gold:F0}  |  Ərzaq: {prov.Food:F0}  |  Dəmir: {prov.Iron:F0}  |  At: {prov.Horses:F0}  |  İpək: {prov.Silk:F0}  |  Moral: {prov.PublicOrder:F0}%  [{prov.Name}{siegeTag}]";
             }
 
             if (demographicsSummaryText != null)
@@ -446,6 +472,14 @@ namespace GrandStrategy.UI
         /// Oyunçu ProvinceNode üzərinə tıkladıqda sağ tərəfdəki Əyalət Məlumat Panelini açır
         /// və ən son baza məlumatlarını göstərir.
         /// </summary>
+        /// <summary>
+        /// Əyalət paneli açıb göstərir və ya seçir.
+        /// </summary>
+        public void SelectProvince(int provinceId)
+        {
+            ShowProvincePanel(provinceId);
+        }
+
         public void ShowProvincePanel(int provinceId)
         {
             _selectedProvinceId = provinceId;
@@ -479,7 +513,7 @@ namespace GrandStrategy.UI
         {
             if (_selectedProvinceId <= 0)
             {
-                return;
+                _selectedProvinceId = 1;
             }
 
             DatabaseManager db = DatabaseManager.Instance != null
@@ -539,8 +573,8 @@ namespace GrandStrategy.UI
             {
                 string siegeStr = province.IsBesieged ? (province.IsExploited ? "Mühasirədə (İstismar)" : "Mühasirədə") : "Açıq";
                 economyDetailsText.text =
-                    $"Qızıl: {province.Gold:F1} | Ərzaq: {province.Food:F1} | Moral: {province.PublicOrder:F0}/100 | Vəziyyət: {siegeStr}\n" +
-                    $"Doğum Çarpanı: {province.BirthRateModifier * 100f:F0}% | Xammal: {economy.RawMaterials:F1} | Vergi Gəliri: {economy.LocalTaxIncome:F1}";
+                    $"Qızıl: {province.Gold:F1} | Ərzaq: {province.Food:F1} | Dəmir: {province.Iron:F0} | At: {province.Horses:F0} | İpək: {province.Silk:F0}\n" +
+                    $"Moral: {province.PublicOrder:F0}/100 | Vəziyyət: {siegeStr} | Doğum: {province.BirthRateModifier * 100f:F0}% | Vergi: {economy.LocalTaxIncome:F1}";
             }
 
             RefreshInfrastructureActionPanel(province);

@@ -454,4 +454,6 @@ MonoBehaviour:
   soldierCountText: {fileID: 1151455131377895598}
   shieldWallIndicatorImage: {fileID: 0}
   isRanged: 0
+  hasIronEquipment: 1
+  hasHorsesMounted: 1
   gateTitleText: {fileID: 3152408378271012399}

@@ -1212,6 +1212,17 @@ namespace GrandStrategy.Tactical
                     isPlayerControlled,
                     anchoredPos);
 
+                // Faza 8.1: Strateji Resurs Asılılıqları: Dəmir (Iron) və At (Horses) yoxlanışı
+                if (DatabaseManager.Instance != null && DatabaseManager.Instance.IsConnected)
+                {
+                    Nation ownerNation = DatabaseManager.Instance.Connection.Table<Nation>().FirstOrDefault(n => n.Id == army.OwnerFactionId);
+                    if (ownerNation != null)
+                    {
+                        token.HasIronEquipment = ownerNation.Iron > 0f;
+                        token.HasHorsesMounted = ownerNation.Horses > 0f;
+                    }
+                }
+
                 targetList.Add(token);
             }
         }

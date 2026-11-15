@@ -37,6 +37,7 @@ namespace GrandStrategy.Core
         public int AdultsRemaining;
         public float OldBirthRateModifier;
         public float NewBirthRateModifier;
+        public bool HasIronEquipment;
     }
 
     /// <summary>
@@ -435,7 +436,25 @@ namespace GrandStrategy.Core
                 if (nation != null)
                 {
                     nation.Adults = province.Adults;
+
+                    // Faza 8.1: Dəmir Asılılığı:
+                    // CallEmergencyConscription zamanı xəzinədə kifayət qədər Iron yoxdursa, qoşun Kalkan Duvarı qura bilmir
+                    if (nation.Iron >= 5f)
+                    {
+                        nation.Iron = Mathf.Max(0f, nation.Iron - 5f);
+                        result.HasIronEquipment = true;
+                    }
+                    else
+                    {
+                        result.HasIronEquipment = false;
+                        Debug.LogWarning($"[MilitaryAndDiplomacyController] Dəmir çatışmır: Dövlət #{nation.Id} xəzinəsində Iron < 5. Milis Kalkan Duvarı qura bilməz!");
+                    }
+
                     conn.Update(nation);
+                }
+                else
+                {
+                    result.HasIronEquipment = false;
                 }
 
                 var militiaArmy = new Army
@@ -1024,6 +1043,134 @@ namespace GrandStrategy.Core
             }
 
             Debug.LogWarning($"[MilitaryAndDiplomacyController] MÜTTƏFİQ DÖYÜŞƏ QOŞULDU! Fraksiya #{factionX} və Fraksiya #{factionY} arasında müharibə vəziyyəti yarandı.");
+        }
+
+        #endregion
+
+        #region Faza 8.1 - Strateji Resurs Asılılıqları (Ağır Piyada və Süvari Yığımı)
+
+        /// <summary>
+        /// Faza 8.1: Xəzinədə kifayət qədər Dəmir (Iron) olub-olmadığını yoxlayır.
+        /// </summary>
+        public bool HasRequiredIron(int factionId, float requiredIron = 5f, DatabaseManager dbManager = null)
+        {
+            DatabaseManager db = dbManager != null ? dbManager : DatabaseManager.Instance;
+            if (db == null || !db.IsConnected) return false;
+
+            Nation nation = db.Connection.Table<Nation>().FirstOrDefault(n => n.Id == factionId);
+            return nation != null && nation.Iron >= requiredIron;
+        }
+
+        /// <summary>
+        /// Faza 8.1: Xəzinədə kifayət qədər At (Horses) olub-olmadığını yoxlayır.
+        /// </summary>
+        public bool HasRequiredHorses(int factionId, float requiredHorses = 5f, DatabaseManager dbManager = null)
+        {
+            DatabaseManager db = dbManager != null ? dbManager : DatabaseManager.Instance;
+            if (db == null || !db.IsConnected) return false;
+
+            Nation nation = db.Connection.Table<Nation>().FirstOrDefault(n => n.Id == factionId);
+            return nation != null && nation.Horses >= requiredHorses;
+        }
+
+        /// <summary>
+        /// Faza 8.1: Dəmir Asılılığı ilə Ağır Piyada (Heavy Infantry) yığımı.
+        /// Xəzinədə kifayət qədər Iron olmalıdır. Dəmir yoxdursa və ya çatmırsa, yığım uğursuz olur.
+        /// </summary>
+        public bool RecruitHeavyInfantry(int provinceId, int count, DatabaseManager dbManager = null)
+        {
+            DatabaseManager db = dbManager != null ? dbManager : DatabaseManager.Instance;
+            if (db == null || !db.IsConnected) return false;
+
+            bool success = false;
+            db.RunInTransaction(conn =>
+            {
+                Province province = conn.Table<Province>().FirstOrDefault(p => p.Id == provinceId);
+                Population population = conn.Table<Population>().FirstOrDefault(pop => pop.ProvinceId == provinceId);
+                if (province == null || population == null) return;
+
+                Nation nation = conn.Table<Nation>().FirstOrDefault(n => n.Id == province.OwnerFactionId);
+                float requiredIron = Mathf.Max(1f, count * 0.1f);
+                if (nation == null || nation.Iron < requiredIron || population.Adults < count)
+                {
+                    Debug.LogWarning($"[MilitaryAndDiplomacyController] Ağır Piyada yığımı uğursuz: Xəzinədə Iron ({nation?.Iron ?? 0:F1}/{requiredIron:F1}) və ya Adults ({population.Adults}/{count}) çatışmır!");
+                    return;
+                }
+
+                nation.Iron -= requiredIron;
+                population.Adults -= count;
+                province.Adults = population.Adults;
+                nation.Adults = province.Adults;
+
+                var army = new Army
+                {
+                    OwnerFactionId = province.OwnerFactionId,
+                    LocationProvinceId = province.Id,
+                    YouthSoldiers = 0,
+                    AdultSoldiers = count,
+                    Morale = 0.9f
+                };
+
+                conn.Update(province);
+                conn.Update(population);
+                conn.Update(nation);
+                conn.Insert(army);
+                success = true;
+
+                Debug.Log($"[MilitaryAndDiplomacyController] {count} Ağır Piyada yığıldı ({requiredIron:F1} Iron xərcləndi) -> Ordu #{army.Id}");
+            });
+
+            return success;
+        }
+
+        /// <summary>
+        /// Faza 8.1: At Asılılığı ilə Süvari (Cavalry) yığımı.
+        /// Xəzinədə kifayət qədər Horses olmalıdır. At yoxdursa, "Flanking" edəcək sürətli qoşun çıxarıla bilməz.
+        /// </summary>
+        public bool RecruitCavalry(int provinceId, int count, DatabaseManager dbManager = null)
+        {
+            DatabaseManager db = dbManager != null ? dbManager : DatabaseManager.Instance;
+            if (db == null || !db.IsConnected) return false;
+
+            bool success = false;
+            db.RunInTransaction(conn =>
+            {
+                Province province = conn.Table<Province>().FirstOrDefault(p => p.Id == provinceId);
+                Population population = conn.Table<Population>().FirstOrDefault(pop => pop.ProvinceId == provinceId);
+                if (province == null || population == null) return;
+
+                Nation nation = conn.Table<Nation>().FirstOrDefault(n => n.Id == province.OwnerFactionId);
+                float requiredHorses = Mathf.Max(1f, count * 0.1f);
+                if (nation == null || nation.Horses < requiredHorses || population.Youths < count)
+                {
+                    Debug.LogWarning($"[MilitaryAndDiplomacyController] Süvari yığımı uğursuz: Xəzinədə Horses ({nation?.Horses ?? 0:F1}/{requiredHorses:F1}) və ya Youths ({population.Youths}/{count}) çatışmır!");
+                    return;
+                }
+
+                nation.Horses -= requiredHorses;
+                population.Youths -= count;
+                province.Youths = population.Youths;
+                nation.Youths = province.Youths;
+
+                var army = new Army
+                {
+                    OwnerFactionId = province.OwnerFactionId,
+                    LocationProvinceId = province.Id,
+                    YouthSoldiers = count,
+                    AdultSoldiers = 0,
+                    Morale = 0.95f
+                };
+
+                conn.Update(province);
+                conn.Update(population);
+                conn.Update(nation);
+                conn.Insert(army);
+                success = true;
+
+                Debug.Log($"[MilitaryAndDiplomacyController] {count} Elit Süvari yığıldı ({requiredHorses:F1} Horses xərcləndi) -> Ordu #{army.Id}");
+            });
+
+            return success;
         }
 
         #endregion

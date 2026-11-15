@@ -170,7 +170,7 @@ namespace GrandStrategy.Tactical
             TacticalBattleManager battleManager = TacticalBattleManager.Instance;
             IReadOnlyList<UI_BattalionToken> candidates = battleManager != null
                 ? battleManager.ActiveBattalions
-                : FindObjectsByType<UI_BattalionToken>(FindObjectsSortMode.None);
+                : FindObjectsByType<UI_BattalionToken>();
 
             for (int i = candidates.Count - 1; i >= 0; i--)
             {
@@ -240,7 +240,7 @@ namespace GrandStrategy.Tactical
             TacticalBattleManager battleManager = TacticalBattleManager.Instance;
             IReadOnlyList<UI_BattalionToken> candidates = battleManager != null
                 ? battleManager.ActiveBattalions
-                : FindObjectsByType<UI_BattalionToken>(FindObjectsSortMode.None);
+                : FindObjectsByType<UI_BattalionToken>();
 
             for (int i = 0; i < candidates.Count; i++)
             {
@@ -273,7 +273,7 @@ namespace GrandStrategy.Tactical
             TacticalBattleManager battleManager = TacticalBattleManager.Instance;
             IReadOnlyList<UI_BattalionToken> candidates = battleManager != null
                 ? battleManager.ActiveBattalions
-                : FindObjectsByType<UI_BattalionToken>(FindObjectsSortMode.None);
+                : FindObjectsByType<UI_BattalionToken>();
 
             for (int i = 0; i < candidates.Count; i++)
             {

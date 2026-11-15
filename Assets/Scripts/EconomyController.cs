@@ -157,6 +157,23 @@ namespace GrandStrategy.Core
             province.Gold += economy.LocalTaxIncome;
             province.Food += foodBalance;
 
+            // Faza 8.1: Strateji resursların (Iron, Horses, Silk) aylıq istehsalı:
+            // Dağlıq əyalətlərdə Iron, Düzənlik/Çöl əyalətlərində Horses, Ticarət mərkəzində Silk
+            if (string.Equals(province.StrategicResourceType, "Iron", StringComparison.OrdinalIgnoreCase)
+                || (!string.IsNullOrEmpty(province.Climate) && province.Climate.IndexOf("Dağlıq", StringComparison.OrdinalIgnoreCase) >= 0))
+            {
+                province.Iron += Mathf.Max(0.5f, (adults / 200f) * devLevel * productivity * 0.1f);
+            }
+            if (string.Equals(province.StrategicResourceType, "Horses", StringComparison.OrdinalIgnoreCase)
+                || (!string.IsNullOrEmpty(province.Climate) && (province.Climate.IndexOf("Düzənlik", StringComparison.OrdinalIgnoreCase) >= 0 || province.Climate.IndexOf("Quraq", StringComparison.OrdinalIgnoreCase) >= 0)))
+            {
+                province.Horses += Mathf.Max(0.5f, (adults / 250f) * devLevel * productivity * 0.1f);
+            }
+            if (string.Equals(province.StrategicResourceType, "Silk", StringComparison.OrdinalIgnoreCase))
+            {
+                province.Silk += Mathf.Max(0.2f, (adults / 300f) * devLevel * productivity * 0.05f);
+            }
+
             var report = new MonthlyEconomyReport
             {
                 Month = month,
@@ -282,12 +299,22 @@ namespace GrandStrategy.Core
                     LastMonthlyReports.Add(report);
                     if (matchingNation != null)
                     {
-                        // Faza 6C: Mühasirə başlayanda əyalətdəki resurslar (Qızıl və Ərzaq)
+                        // Faza 6C & 8.1: Mühasirə başlayanda əyalətdəki resurslar (Qızıl, Ərzaq, Dəmir, At, İpək)
                         // qlobal (Nation) xəzinəyə axmağı dayandırır.
                         if (!prov.IsBesieged)
                         {
                             matchingNation.Gold = prov.Gold;
                             matchingNation.Food = prov.Food;
+                            matchingNation.Iron = prov.Iron;
+                            matchingNation.Horses = prov.Horses;
+                            matchingNation.Silk = prov.Silk;
+                        }
+
+                        // Faza 8.1: İpək Bonusu: Aylıq döngüdə, əgər dövlətin xəzinəsində Silk varsa (Silk > 0),
+                        // bütün əyalətlərdə PublicOrder (Xalqın Moralı) hər ay +2 bal artır.
+                        if (matchingNation.Silk > 0f)
+                        {
+                            prov.PublicOrder = Mathf.Clamp(prov.PublicOrder + 2f, 0f, 100f);
                         }
 
                         matchingNation.Babies = prov.Babies;

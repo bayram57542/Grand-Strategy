@@ -104,6 +104,12 @@ namespace GrandStrategy.Core
         [Tooltip("Səhnədəki AIDiplomacyController referansı (Faza 7.2: Proaktiv AI və Koalisiya Motoru)")]
         [SerializeField] private AIDiplomacyController aiDiplomacyController;
 
+        [Tooltip("Səhnədəki DynamicMarketController referansı (Faza 8.1: Dinamik Bazar və Resurs Dalğalanması)")]
+        [SerializeField] private DynamicMarketController dynamicMarketController;
+
+        [Tooltip("Səhnədəki TradeController referansı (Faza 8.2: Qlobal Ticarət, Fiziki Karvanlar və Yağmalama)")]
+        [SerializeField] private TradeController tradeController;
+
         private float _tickTimer;
         private bool _eventsBound;
 
@@ -337,6 +343,38 @@ namespace GrandStrategy.Core
                 aiDiplomacyController = aiObj.AddComponent<AIDiplomacyController>();
             }
 
+            if (dynamicMarketController == null)
+            {
+                dynamicMarketController = DynamicMarketController.Instance;
+            }
+
+            if (dynamicMarketController == null)
+            {
+                dynamicMarketController = FindAnyObjectByType<DynamicMarketController>();
+            }
+
+            if (dynamicMarketController == null)
+            {
+                var marketObj = new GameObject("DynamicMarketController");
+                dynamicMarketController = marketObj.AddComponent<DynamicMarketController>();
+            }
+
+            if (tradeController == null)
+            {
+                tradeController = TradeController.Instance;
+            }
+
+            if (tradeController == null)
+            {
+                tradeController = FindAnyObjectByType<TradeController>();
+            }
+
+            if (tradeController == null)
+            {
+                var tradeObj = new GameObject("TradeController");
+                tradeController = tradeObj.AddComponent<TradeController>();
+            }
+
             if (!_eventsBound)
             {
                 OnMonthPassed -= HandleMonthPassed;
@@ -403,6 +441,18 @@ namespace GrandStrategy.Core
             if (aiDiplomacyController != null)
             {
                 aiDiplomacyController.ProcessMonthlyAI(databaseManager, month, year);
+            }
+
+            // 8. Aylıq Dinamik Bazar (ProcessMarketFluctuations): Müharibə, Mühasirə və Sülhə görə qiymət dalğalanmaları
+            if (dynamicMarketController != null)
+            {
+                dynamicMarketController.ProcessMarketFluctuations(databaseManager);
+            }
+
+            // 9. Aylıq Qlobal Ticarət (ProcessMonthlyTrade): Fiziki Karvanların hərəkəti, çatdırılması və düşmən orduları tərəfindən yağmalanması
+            if (tradeController != null)
+            {
+                tradeController.ProcessMonthlyTrade(databaseManager, month, year);
             }
         }
 
